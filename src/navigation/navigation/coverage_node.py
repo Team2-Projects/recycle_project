@@ -235,7 +235,7 @@ def main(args=None):
     rclpy.init(args=args)
     node = CoveragePlanner()
 
-    while rclpy.dk():
+    while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=0.1)
         if node.path_published:
             break
