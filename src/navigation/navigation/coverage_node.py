@@ -140,14 +140,14 @@ class CoveragePlanner(Node):
         dx = np.abs(safe_xs - self.home_x)
         gx, gy = self.pick_farthest(safe_xs, safe_ys, dx, fix_axis='y')
         self.get_logger().info(f'X-farthest: ({gx:.2f}, {gy:.2f})')
-        return gx, gy
+        return gx -0.2, gy
 
     # ── 세로 최원점 ───────────────────────────────────
     def get_farthest_y_goal(self, safe_xs, safe_ys):
         dy = np.abs(safe_ys - self.home_y)
         gx, gy = self.pick_farthest(safe_xs, safe_ys, dy, fix_axis='x')
         self.get_logger().info(f'Y-farthest: ({gx:.2f}, {gy:.2f})')
-        return gx, gy
+        return gx, gy + 0.2
 
     # ── 대각선 최원점 ─────────────────────────────────
     def get_farthest_xy_goal(self, safe_xs, safe_ys):
@@ -157,38 +157,14 @@ class CoveragePlanner(Node):
         idx  = np.argmax(dist)
         gx, gy = float(safe_xs[idx]), float(safe_ys[idx])
         self.get_logger().info(f'XY-farthest: ({gx:.2f}, {gy:.2f})  dist={dist[idx]:.2f}m')
-        return gx, gy
+        return gx -0.2, gy + 0.2
 
-    # ── 🎯 [신규 추가] 정중앙 점 구하기 (장애물 자동 우회) ──
-   # ── 🎯 [수정 완료] 홈(Home)과 대각선 끝점(XY)의 딱 중간 점 구하기 ──
-    def get_center_goal(self, safe_xs, safe_ys):
-        # 1. 먼저 대각선 방향으로 가장 먼 끝점(XY-farthest)의 좌표를 구합니다.
-        dx_farthest = np.abs(safe_xs - self.home_x)
-        dy_farthest = np.abs(safe_ys - self.home_y)
-        dist_xy = dx_farthest + dy_farthest
-        farthest_idx = np.argmax(dist_xy)
-        
-        xy_far_x = float(safe_xs[farthest_idx])
-        xy_far_y = float(safe_ys[farthest_idx])
-
-        # 2. 홈 좌표와 대각선 끝점의 '수학적 중심(평균값)'을 구합니다.
+    # ── 홈(Home)과 대각선 끝점(XY)의 딱 중간 점 구하기 ──
+    def get_center_goal(self, xy_far_x, xy_far_y):
         target_center_x = (self.home_x + xy_far_x) / 2.0
         target_center_y = (self.home_y + xy_far_y) / 2.0
 
-        # 3. 모든 안전한 셀들과 이 '목표 중심점' 간의 유클리드 거리 계산
-        distances = np.sqrt((safe_xs - target_center_x)**2 + (safe_ys - target_center_y)**2)
-
-        # 4. 목표 중심점과 가장 가까우면서 실제 갈 수 있는 '진짜 비어있는 바닥' 선택
-        best_idx = np.argmin(distances)
-        
-        gx = float(safe_xs[best_idx])
-        gy = float(safe_ys[best_idx])
-        
-        self.get_logger().info(
-            f'Center-goal (Between Home & XY-farthest): ({gx:.2f}, {gy:.2f}) | '
-            f'Target Midpoint: ({target_center_x:.2f}, {target_center_y:.2f})'
-        )
-        return gx, gy
+        return target_center_x, target_center_y
 
     # ── 경로 발행 ─────────────────────────────────────
     def publish_path(self):
@@ -209,9 +185,9 @@ class CoveragePlanner(Node):
 
         goal_x      = self.get_farthest_x_goal(safe_xs, safe_ys)
         goal_y      = self.get_farthest_y_goal(safe_xs, safe_ys)
-        goal_center = self.get_center_goal(safe_xs, safe_ys)  # 👈 중앙 좌표 획득
         goal_xy     = self.get_farthest_xy_goal(safe_xs, safe_ys)
-
+        goal_center = self.get_center_goal(goal_xy[0], goal_xy[1])  # 👈 중앙 좌표 획득
+        
         waypoints = [
             goal_x,
             goal_xy,
