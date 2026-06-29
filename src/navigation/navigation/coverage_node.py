@@ -140,7 +140,7 @@ class CoveragePlanner(Node):
         dx = np.abs(safe_xs - self.home_x)
         gx, gy = self.pick_farthest(safe_xs, safe_ys, dx, fix_axis='y')
         self.get_logger().info(f'X-farthest: ({gx:.2f}, {gy:.2f})')
-        return gx -0.2, gy
+        return gx, gy
 
     # ── 세로 최원점 ───────────────────────────────────
     def get_farthest_y_goal(self, safe_xs, safe_ys):
