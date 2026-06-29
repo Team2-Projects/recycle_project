@@ -160,19 +160,34 @@ class CoveragePlanner(Node):
         return gx, gy
 
     # ── 🎯 [신규 추가] 정중앙 점 구하기 (장애물 자동 우회) ──
+   # ── 🎯 [수정 완료] 홈(Home)과 대각선 끝점(XY)의 딱 중간 점 구하기 ──
     def get_center_goal(self, safe_xs, safe_ys):
-        # 1. 안전 영역의 수학적 경계 중심 구하기
-        geom_center_x = np.median(safe_xs)
-        geom_center_y = np.median(safe_ys)
+        # 1. 먼저 대각선 방향으로 가장 먼 끝점(XY-farthest)의 좌표를 구합니다.
+        dx_farthest = np.abs(safe_xs - self.home_x)
+        dy_farthest = np.abs(safe_ys - self.home_y)
+        dist_xy = dx_farthest + dy_farthest
+        farthest_idx = np.argmax(dist_xy)
+        
+        xy_far_x = float(safe_xs[farthest_idx])
+        xy_far_y = float(safe_ys[farthest_idx])
 
-        # 2. 모든 안전한 셀들과의 유클리드 거리 계산
-        distances = np.sqrt((safe_xs - geom_center_x)**2 + (safe_ys - geom_center_y)**2)
+        # 2. 홈 좌표와 대각선 끝점의 '수학적 중심(평균값)'을 구합니다.
+        target_center_x = (self.home_x + xy_far_x) / 2.0
+        target_center_y = (self.home_y + xy_far_y) / 2.0
 
-        # 3. 중심점과 가장 가까우면서 '진짜 비어있는 바닥' 선택
+        # 3. 모든 안전한 셀들과 이 '목표 중심점' 간의 유클리드 거리 계산
+        distances = np.sqrt((safe_xs - target_center_x)**2 + (safe_ys - target_center_y)**2)
+
+        # 4. 목표 중심점과 가장 가까우면서 실제 갈 수 있는 '진짜 비어있는 바닥' 선택
         best_idx = np.argmin(distances)
         
-        gx, gy = float(safe_xs[best_idx]), float(safe_ys[best_idx])
-        self.get_logger().info(f'Center-goal (Obstacle avoided): ({gx:.2f}, {gy:.2f})')
+        gx = float(safe_xs[best_idx])
+        gy = float(safe_ys[best_idx])
+        
+        self.get_logger().info(
+            f'Center-goal (Between Home & XY-farthest): ({gx:.2f}, {gy:.2f}) | '
+            f'Target Midpoint: ({target_center_x:.2f}, {target_center_y:.2f})'
+        )
         return gx, gy
 
     # ── 경로 발행 ─────────────────────────────────────
