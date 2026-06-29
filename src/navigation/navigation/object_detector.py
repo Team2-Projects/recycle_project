@@ -27,7 +27,7 @@ class ObjectDetector(Node):
         self.target_y = None
         
         # 🚨 감지가 너무 안 된다면 반경을 0.5m에서 0.8m로 살짝 넓혀서 확실히 밟게 만듭니다.
-        self.detection_radius = 0.6
+        self.detection_radius = 0.8
 
         self.create_subscription(Path, '/coverage_path', self.path_callback, qos)
         self.timer = self.create_timer(0.2, self.check_robot_position)
@@ -83,6 +83,7 @@ class ObjectDetector(Node):
         pose.pose.position.x = x
         pose.pose.position.y = y
         pose.pose.orientation.w = 1.0
+        pose.pose.orientation.z = 2.0
 
         # 확실하게 전송되도록 약간의 간격을 두고 3번 연속 펍(Publish)합니다.
         for _ in range(3):

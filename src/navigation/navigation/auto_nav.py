@@ -29,8 +29,15 @@ class AutoNav(Node):
 
         self.is_running         = False
         self.object_found       = False
+        self.recycle_number = None
         self.home_x             = None
         self.home_y             = None
+        self.recycle_point0_x = None
+        self.recycle_point0_y = None
+        self.recycle_point1_x = None
+        self.recycle_point1_y = None
+        self.recycle_point2_x = None
+        self.recycle_point2_y = None
         self.center_x = None
         self.center_y = None
         self.current_handle     = None
@@ -64,6 +71,14 @@ class AutoNav(Node):
         self.waypoints = list(self.original_waypoints)
         self.home_x = self.waypoints[-1][0]
         self.home_y = self.waypoints[-1][1]
+
+        self.recycle_point0_x = self.home_x - 0.1
+        self.recycle_point0_y = self.home_y + 0.1
+        self.recycle_point1_x = self.home_x - 0.1
+        self.recycle_point1_y = self.home_y
+        self.recycle_point2_x = self.home_x - 0.1
+        self.recycle_point2_y = self.home_y - 0.1
+
         self.center_x = self.waypoints[2][0]
         self.center_y = self.waypoints[2][1]
 
@@ -77,6 +92,7 @@ class AutoNav(Node):
             return
 
         self.object_found = True
+        self.recycle_number = int(msg.pose.orientation.z)
         obj_x = msg.pose.position.x
         obj_y = msg.pose.position.y
         self.get_logger().info(f'🎯 Object detected! Heading to object then home...')
@@ -84,19 +100,49 @@ class AutoNav(Node):
         resume_x, resume_y = self.waypoints[self.current_idx]
 
         if self.current_idx == 3:
-            self.object_waypoints = [
-                (obj_x, obj_y, None),
-                (self.center_x, self.center_y, None),
-                (self.home_x, self.home_y, ACTION_RECYCLE_NODE),
-                (self.center_x, self.center_y, None),
-                (resume_x, resume_y, None), 
-            ]
+            if self.recycle_number == 0:
+                self.object_waypoints = [
+                    (obj_x, obj_y, None),
+                    (self.center_x, self.center_y, None),
+                    (self.recycle_point0_x, self.recycle_point0_y, ACTION_RECYCLE_NODE),
+                    (self.center_x, self.center_y, None),
+                    (resume_x, resume_y, None), 
+                ]
+            elif self.recycle_number == 1:
+                self.object_waypoints = [
+                    (obj_x, obj_y, None),
+                    (self.center_x, self.center_y, None),
+                    (self.recycle_point1_x, self.recycle_point1_y, ACTION_RECYCLE_NODE),
+                    (self.center_x, self.center_y, None),
+                    (resume_x, resume_y, None), 
+                ]
+            elif self.recycle_number == 2:
+                self.object_waypoints = [
+                    (obj_x, obj_y, None),
+                    (self.center_x, self.center_y, None),
+                    (self.recycle_point2_y, self.recycle_point2_y, ACTION_RECYCLE_NODE),
+                    (self.center_x, self.center_y, None),
+                    (resume_x, resume_y, None), 
+                ]
         else:
-            self.object_waypoints = [
-                (obj_x, obj_y, None),
-                (self.home_x, self.home_y, ACTION_RECYCLE_NODE),
-                (resume_x, resume_y, None), 
-            ]
+            if self.recycle_number == 0:
+                self.object_waypoints = [
+                    (obj_x, obj_y, None),
+                    (self.recycle_point0_x, self.recycle_point0_y, ACTION_RECYCLE_NODE),
+                    (resume_x, resume_y, None), 
+                ]
+            elif self.recycle_number == 1:
+                self.object_waypoints = [
+                    (obj_x, obj_y, None),
+                    (self.recycle_point1_x, self.recycle_point1_y, ACTION_RECYCLE_NODE),
+                    (resume_x, resume_y, None), 
+                ]
+            elif self.recycle_number == 2:
+                self.object_waypoints = [
+                    (obj_x, obj_y, None),
+                    (self.recycle_point2_y, self.recycle_point2_y, ACTION_RECYCLE_NODE),
+                    (resume_x, resume_y, None), 
+                ]
 
         self.object_idx = 0
         
