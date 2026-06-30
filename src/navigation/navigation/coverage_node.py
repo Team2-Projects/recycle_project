@@ -147,7 +147,7 @@ class CoveragePlanner(Node):
         dy = np.abs(safe_ys - self.home_y)
         gx, gy = self.pick_farthest(safe_xs, safe_ys, dy, fix_axis='x')
         self.get_logger().info(f'Y-farthest: ({gx:.2f}, {gy:.2f})')
-        return gx, gy + 0.2
+        return gx, gy
 
     # ── 대각선 최원점 ─────────────────────────────────
     def get_farthest_xy_goal(self, safe_xs, safe_ys):
@@ -157,7 +157,7 @@ class CoveragePlanner(Node):
         idx  = np.argmax(dist)
         gx, gy = float(safe_xs[idx]), float(safe_ys[idx])
         self.get_logger().info(f'XY-farthest: ({gx:.2f}, {gy:.2f})  dist={dist[idx]:.2f}m')
-        return gx -0.2, gy + 0.2
+        return gx, gy 
 
     # ── 홈(Home)과 대각선 끝점(XY)의 딱 중간 점 구하기 ──
     def get_center_goal(self, xy_far_x, xy_far_y):

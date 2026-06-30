@@ -6,6 +6,7 @@ from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Path
 from tf2_ros import Buffer, TransformListener
+from std_msgs.msg import Empty
 import subprocess 
 import time
 import math
@@ -18,6 +19,7 @@ class AutoNav(Node):
         super().__init__('auto_nav')
         self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.reset_detector_pub = self.create_publisher(Empty, '/reset_object_detector', 10)
 
         self.original_waypoints = []
         self.waypoints          = []
@@ -72,11 +74,11 @@ class AutoNav(Node):
         self.home_x = self.waypoints[-1][0]
         self.home_y = self.waypoints[-1][1]
 
-        self.recycle_point0_x = self.home_x - 0.1
+        self.recycle_point0_x = self.home_x - 1.0
         self.recycle_point0_y = self.home_y + 0.1
-        self.recycle_point1_x = self.home_x - 0.1
+        self.recycle_point1_x = self.home_x - 1.0
         self.recycle_point1_y = self.home_y
-        self.recycle_point2_x = self.home_x - 0.1
+        self.recycle_point2_x = self.home_x - 1.0
         self.recycle_point2_y = self.home_y - 0.1
 
         self.center_x = self.waypoints[2][0]
@@ -167,6 +169,10 @@ class AutoNav(Node):
         self._ext_timer.cancel()
         self._ext_timer = None
         self._ext_proc  = None
+
+        self.reset_detector_pub.publish(Empty())
+        self.get_logger().info('📡 Published /reset_object_detector')
+
         self.send_next_goal()
 
     def send_next_goal(self):

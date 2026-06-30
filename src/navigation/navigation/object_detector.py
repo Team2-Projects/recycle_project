@@ -4,6 +4,7 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformListener, TransformException
+from std_msgs.msg import Empty
 import math
 
 class ObjectDetector(Node):
@@ -24,10 +25,15 @@ class ObjectDetector(Node):
         self.detected      = False
         self.detect_thresh = 2.0  # 👈 2미터 이내 감지
 
-        self.detection_radius = 0.8
+        self.detection_radius = 0.4
 
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        self.create_subscription(Empty, '/reset_object_detector', self.reset_callback, 10)
         self.get_logger().info('Object Detector Ready.')
+
+    def reset_callback(self, msg):
+        self.detected = False
+        self.get_logger().info('🔄 Detector reset, scanning resumed.')
 
     def scan_callback(self, msg):
         if self.detected:
@@ -53,8 +59,8 @@ class ObjectDetector(Node):
             # 해당 인덱스의 각도 계산
             angle = msg.angle_min + i * msg.angle_increment
 
-            # 정면 ±20도만 (옆 벽 무시)
-            if abs(angle) > math.radians(20):
+            # 정면 ±45도만 (옆 벽 무시)
+            if abs(angle) > math.radians(45):
                 continue
 
             # 장애물 좌표 계산 (로봇 기준 → map 기준)
@@ -79,7 +85,7 @@ class ObjectDetector(Node):
         pose.pose.position.x = x
         pose.pose.position.y = y
         pose.pose.orientation.w = 1.0
-        pose.pose.orientation.z = 2.0
+        pose.pose.orientation.z = 0.0
 
         for _ in range(3):
             self.pose_pub.publish(pose)
