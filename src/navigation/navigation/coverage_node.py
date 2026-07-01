@@ -157,23 +157,14 @@ class CoveragePlanner(Node):
         idx  = np.argmax(dist)
         gx, gy = float(safe_xs[idx]), float(safe_ys[idx])
         self.get_logger().info(f'XY-farthest: ({gx:.2f}, {gy:.2f})  dist={dist[idx]:.2f}m')
-        return gx, gy
+        return gx, gy 
 
-    # ── 🎯 [신규 추가] 정중앙 점 구하기 (장애물 자동 우회) ──
-    def get_center_goal(self, safe_xs, safe_ys):
-        # 1. 안전 영역의 수학적 경계 중심 구하기
-        geom_center_x = np.median(safe_xs)
-        geom_center_y = np.median(safe_ys)
+    # ── 홈(Home)과 대각선 끝점(XY)의 딱 중간 점 구하기 ──
+    def get_center_goal(self, xy_far_x, xy_far_y):
+        target_center_x = (self.home_x + xy_far_x) / 2.0
+        target_center_y = (self.home_y + xy_far_y) / 2.0
 
-        # 2. 모든 안전한 셀들과의 유클리드 거리 계산
-        distances = np.sqrt((safe_xs - geom_center_x)**2 + (safe_ys - geom_center_y)**2)
-
-        # 3. 중심점과 가장 가까우면서 '진짜 비어있는 바닥' 선택
-        best_idx = np.argmin(distances)
-        
-        gx, gy = float(safe_xs[best_idx]), float(safe_ys[best_idx])
-        self.get_logger().info(f'Center-goal (Obstacle avoided): ({gx:.2f}, {gy:.2f})')
-        return gx, gy
+        return target_center_x, target_center_y
 
     # ── 경로 발행 ─────────────────────────────────────
     def publish_path(self):
@@ -194,9 +185,9 @@ class CoveragePlanner(Node):
 
         goal_x      = self.get_farthest_x_goal(safe_xs, safe_ys)
         goal_y      = self.get_farthest_y_goal(safe_xs, safe_ys)
-        goal_center = self.get_center_goal(safe_xs, safe_ys)  # 👈 중앙 좌표 획득
         goal_xy     = self.get_farthest_xy_goal(safe_xs, safe_ys)
-
+        goal_center = self.get_center_goal(goal_xy[0], goal_xy[1])  # 👈 중앙 좌표 획득
+        
         waypoints = [
             goal_x,
             goal_xy,
@@ -235,7 +226,7 @@ def main(args=None):
     rclpy.init(args=args)
     node = CoveragePlanner()
 
-    while rclpy.dk():
+    while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=0.1)
         if node.path_published:
             break
