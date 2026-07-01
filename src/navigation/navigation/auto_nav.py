@@ -7,9 +7,12 @@ from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Path
 from tf2_ros import Buffer, TransformListener
 from std_msgs.msg import Empty
+from navigation_interface.srv import RecycleActionMsg
+from action_msgs.msg import GoalStatus
 import subprocess 
 import time
 import math
+from .nav_utils import normalize_angle, get_yaw_from_quaternion
 
 ACTION_RECYCLE_NODE = 'action_recycle_node'
 
@@ -21,28 +24,18 @@ class AutoNav(Node):
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.reset_detector_pub = self.create_publisher(Empty, '/reset_object_detector', 10)
 
-        self.original_waypoints = []
         self.waypoints          = []
         self.current_idx        = 0
 
-        # object 처리용 별도 경로 [object_pos, home_pos]
-        self.object_waypoints   = []
-        self.object_idx         = 0
-
-        self.is_running         = False
-        self.object_found       = False
-        self.recycle_number = None
-        self.home_x             = None
-        self.home_y             = None
-        self.recycle_point0_x = None
-        self.recycle_point0_y = None
-        self.recycle_point1_x = None
-        self.recycle_point1_y = None
-        self.recycle_point2_x = None
-        self.recycle_point2_y = None
+        self.is_running = False
+        self.object_found = False
+        self.home_x = None
+        self.home_y = None
         self.center_x = None
         self.center_y = None
-        self.current_handle     = None
+        self.resume_x = None
+        self.resume_y = None
+        self.current_handle = None
 
         latched_qos = QoSProfile(
             depth=1,
@@ -52,10 +45,56 @@ class AutoNav(Node):
 
         self.create_subscription(Path, '/coverage_path', self.path_callback, latched_qos)
         self.create_subscription(PoseStamped, '/object_pose', self.object_callback, latched_qos)
+        
+        self.client = self.create_client(RecycleSrv, "recycle_service")
+        
         self.get_logger().info('AutoNav Ready.')
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
+
+    def rotate_180(self):
+        start_yaw = self.get_current_yaw()
+        if start_yaw is None:
+            self.get_logger().warn('TF 획득 실패, 회전 스킵')
+            return
+
+        target_yaw = normalize_angle(start_yaw + math.pi)  # 180도 목표
+
+        msg = Twist()
+        msg.linear.x = 0.0       # 제자리 회전이므로 전진/후진 없음
+        msg.angular.z = 0.5      # 반시계 방향 (라디안/초)
+
+        angle_tolerance = math.radians(3.0)  # 3도 오차까지 허용
+        timeout = time.time() + 10.0         # 안전장치: 10초 넘으면 강제 종료
+
+        while rclpy.ok():
+            current_yaw = self.get_current_yaw()
+            if current_yaw is None:
+                rclpy.spin_once(self, timeout_sec=0.1)
+                continue
+
+            diff = abs(normalize_angle(target_yaw - current_yaw))
+
+            if diff <= angle_tolerance:
+                break
+
+            if time.time() > timeout:
+                self.get_logger().warn('회전 타임아웃, 강제 종료')
+                break
+
+            self.cmd_vel_pub.publish(msg)
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+        self.stop_robot()
+        self.get_logger().info(f'180도 회전 완료 (목표 오차 이내)')
+
+    def get_current_yaw(self):
+        try:
+            t = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
+            return get_yaw_from_quaternion(t.transform.rotation)
+        except Exception:
+            return None
 
     def get_current_pose(self):
         try:
@@ -69,18 +108,9 @@ class AutoNav(Node):
             self.get_logger().warn('Already navigating, ignoring new path')
             return
 
-        self.original_waypoints = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
-        self.waypoints = list(self.original_waypoints)
+        self.waypoints = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
         self.home_x = self.waypoints[-1][0]
         self.home_y = self.waypoints[-1][1]
-
-        self.recycle_point0_x = self.home_x - 1.0
-        self.recycle_point0_y = self.home_y + 0.1
-        self.recycle_point1_x = self.home_x - 1.0
-        self.recycle_point1_y = self.home_y
-        self.recycle_point2_x = self.home_x - 1.0
-        self.recycle_point2_y = self.home_y - 0.1
-
         self.center_x = self.waypoints[2][0]
         self.center_y = self.waypoints[2][1]
 
@@ -94,102 +124,43 @@ class AutoNav(Node):
             return
 
         self.object_found = True
-        self.recycle_number = int(msg.pose.orientation.z)
-        obj_x = msg.pose.position.x
-        obj_y = msg.pose.position.y
-        self.get_logger().info(f'🎯 Object detected! Heading to object then home...')
+        self.get_logger().info('🎯 Object detected! 원래 목표 저장 후 이동 취소')
 
-        resume_x, resume_y = self.waypoints[self.current_idx]
-
-        # 💡 [버그 정정] 원래 코드에 recycle_point2_x 자리에 _y가 들어가있던 오타를 고쳤습니다.
-        if self.current_idx == 3:
-            if self.recycle_number == 0:
-                self.object_waypoints = [
-                    (obj_x, obj_y, None),
-                    (self.center_x, self.center_y, None),
-                    (self.recycle_point0_x, self.recycle_point0_y, ACTION_RECYCLE_NODE),
-                    (self.center_x, self.center_y, None),
-                    (resume_x, resume_y, None), 
-                ]
-            elif self.recycle_number == 1:
-                self.object_waypoints = [
-                    (obj_x, obj_y, None),
-                    (self.center_x, self.center_y, None),
-                    (self.recycle_point1_x, self.recycle_point1_y, ACTION_RECYCLE_NODE),
-                    (self.center_x, self.center_y, None),
-                    (resume_x, resume_y, None), 
-                ]
-            elif self.recycle_number == 2:
-                self.object_waypoints = [
-                    (obj_x, obj_y, None),
-                    (self.center_x, self.center_y, None),
-                    (self.recycle_point2_x, self.recycle_point2_y, ACTION_RECYCLE_NODE), # ← 정정
-                    (self.center_x, self.center_y, None),
-                    (resume_x, resume_y, None), 
-                ]
-        else:
-            if self.recycle_number == 0:
-                self.object_waypoints = [
-                    (obj_x, obj_y, None),
-                    (self.recycle_point0_x, self.recycle_point0_y, ACTION_RECYCLE_NODE),
-                    (resume_x, resume_y, None), 
-                ]
-            elif self.recycle_number == 1:
-                self.object_waypoints = [
-                    (obj_x, obj_y, None),
-                    (self.recycle_point1_x, self.recycle_point1_y, ACTION_RECYCLE_NODE),
-                    (resume_x, resume_y, None), 
-                ]
-            elif self.recycle_number == 2:
-                self.object_waypoints = [
-                    (obj_x, obj_y, None),
-                    (self.recycle_point2_x, self.recycle_point2_y, ACTION_RECYCLE_NODE), # ← 정정
-                    (resume_x, resume_y, None), 
-                ]
-
-        self.object_idx = 0
+        # 재개용 원래 목표 저장
+        self.resume_x, self.resume_y = self.waypoints[self.current_idx]
         
         if self.current_handle is not None:
             self.current_handle.cancel_goal_async()
 
     def launch_recycle_action_node(self):
-        cmd = ['ros2', 'run', 'recycle', 'recycle']
-        self.get_logger().info(f'🚀 Launching: {" ".join(cmd)}')
-        self._ext_proc  = subprocess.Popen(cmd)
-        self._ext_timer = self.create_timer(0.5, self.check_recycle_action_done)
+        req = RecycleSrv.Request()
+        req.index = self.current_idx
+        req.home_x = self.home_x
+        req.home_y = self.home_y
+        req.center_x = self.center_x
+        req.center_y = self.center_y
 
-    def check_recycle_action_done(self):
-        if self._ext_proc is None:
+        self.get_logger().info('🚀 Calling recycle_service (HOME 이동 + 후진 + 회전)')
+        self.client.wait_for_service()
+        future = self.client.call_async(req)
+        future.add_done_callback(self.check_recycle_action_done)
+
+    def check_recycle_action_done(self, future):
+        res = future.result()
+
+        if not res.success:
+            self.get_logger().warn(f'Recycle 실패: {res.message}')
             return
-        if self._ext_proc.poll() is None:
-            return
-
-        ret = self._ext_proc.poll()
-        self.get_logger().info(f'✅ External node finished (exit={ret}). Resuming.')
-        self._ext_timer.cancel()
-        self._ext_timer = None
-        self._ext_proc  = None
-
+        
+        self.get_logger().info("Recycle 끝")
+        self.object_found = False
         self.reset_detector_pub.publish(Empty())
         self.get_logger().info('📡 Published /reset_object_detector')
 
-        self.send_next_goal()
+        self.get_logger().info(f'↩️ 원래 목표로 복귀: ({self.resume_x:.2f}, {self.resume_y:.2f})')
+        self.send_goal(self.resume_x, self.resume_y)
 
     def send_next_goal(self):
-        if self.object_found:
-            if self.object_idx >= len(self.object_waypoints):
-                self.get_logger().info(f'✅ Object handling done. Resuming patrol from waypoint [{self.current_idx}/{len(self.waypoints)}]')
-                self.object_found = False
-                self.object_waypoints = []
-                self.object_idx = 0
-                self.current_idx += 1
-            else:
-                x, y, action = self.object_waypoints[self.object_idx]
-                label = '[OBJECT]' if self.object_idx == 0 else '[HOME]'
-                self.get_logger().info(f'Navigating to {label} ({x:.2f}, {y:.2f})')
-                self.send_goal(x, y)
-                return
-
         if self.current_idx >= len(self.waypoints):
             self.get_logger().info('🏁 Patrol finished. Shutting down...')
             self.destroy_node()
@@ -209,9 +180,6 @@ class AutoNav(Node):
         pose.pose.position.x = x
         pose.pose.position.y = y
         
-        # 🎯 [YAW 수정 핵심] 국룰 실물 트릭 적용
-        # 목적지에 들어설 때 특정 각도를 강제하지 않도록 설정합니다.
-        # 기존의 math.sin/cos 기반 쿼터니언 변환을 지우고 w=1.0으로 오픈합니다.
         pose.pose.orientation.x = 0.0
         pose.pose.orientation.y = 0.0
         pose.pose.orientation.z = 0.0
@@ -231,10 +199,7 @@ class AutoNav(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().warn('Goal rejected! Skipping.')
-            if self.object_found:
-                self.object_idx += 1
-            else:
-                self.current_idx += 1
+            self.current_idx += 1                
             self.send_next_goal()
             return
 
@@ -242,18 +207,19 @@ class AutoNav(Node):
         goal_handle.get_result_async().add_done_callback(self.result_callback)
 
     def result_callback(self, future):
-        if self.object_found:
-            x, y, action = self.object_waypoints[self.object_idx]
-            self.get_logger().info(f'✅ Reached object waypoint ({x:.2f}, {y:.2f})')
-            self.object_idx += 1
-
-            if action == ACTION_RECYCLE_NODE:
+        status = future.result().status
+        if status == GoalStatus.STATUS_CANCELED:
+            if self.object_found:
+                self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
                 self.launch_recycle_action_node()
-                return
-        else:
-            x, y = self.waypoints[self.current_idx]
-            self.get_logger().info(f'✅ Reached ({x:.2f}, {y:.2f})')
-            self.current_idx += 1
+            return
+
+        x, y = self.waypoints[self.current_idx]
+        self.get_logger().info(f'✅ Reached ({x:.2f}, {y:.2f})')
+        if self.current_idx in (1, 3):
+            self.get_logger().info('🔄 Waypoint 1 도착, 180도 회전 시작')
+            self.rotate_180()
+        self.current_idx += 1
 
         self.send_next_goal()
 
