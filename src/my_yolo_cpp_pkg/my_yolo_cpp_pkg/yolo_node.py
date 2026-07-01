@@ -10,7 +10,7 @@ class YoloNode(Node):
     def __init__(self):
         super().__init__('yolo_node')
         # 모델 경로를 확인하세요
-        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/best.onnx')
+        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo_8n.onnx')
         self.subscription = self.create_subscription(
             CompressedImage, '/image_raw/compressed', self.listener_callback, 10)
 

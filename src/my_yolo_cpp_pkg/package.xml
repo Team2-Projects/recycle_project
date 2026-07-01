@@ -2,22 +2,23 @@
 <package format="3">
   <name>my_yolo_cpp_pkg</name>
   <version>0.0.0</version>
-  <description>YOLO object detection package using Python</description>
+  <description>YOLO object detection package</description>
   <maintainer email="hee@todo.todo">hee</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
-  <buildtool_depend>ament_cmake</buildtool_depend> 
-  <build_depend>rosidl_default_generators</build_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>opencv-python</exec_depend>
   <exec_depend>ultralytics</exec_depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
 
   <member_of_group>rosidl_interface_packages</member_of_group>
+  <depend>my_yolo_msgs</depend>
 
   <export>
     <build_type>ament_python</build_type>
