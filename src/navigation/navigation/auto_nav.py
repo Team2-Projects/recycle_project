@@ -51,42 +51,6 @@ class AutoNav(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-    def rotate_180(self):
-        start_yaw = self.get_current_yaw()
-        if start_yaw is None:
-            self.get_logger().warn('TF 획득 실패, 회전 스킵')
-            return
-
-        target_yaw = normalize_angle(start_yaw + math.pi)  # 180도 목표
-
-        msg = Twist()
-        msg.linear.x = 0.0       # 제자리 회전이므로 전진/후진 없음
-        msg.angular.z = 0.5      # 반시계 방향 (라디안/초)
-
-        angle_tolerance = math.radians(3.0)  # 3도 오차까지 허용
-        timeout = time.time() + 10.0         # 안전장치: 10초 넘으면 강제 종료
-
-        while rclpy.ok():
-            current_yaw = self.get_current_yaw()
-            if current_yaw is None:
-                rclpy.spin_once(self, timeout_sec=0.1)
-                continue
-
-            diff = abs(normalize_angle(target_yaw - current_yaw))
-
-            if diff <= angle_tolerance:
-                break
-
-            if time.time() > timeout:
-                self.get_logger().warn('회전 타임아웃, 강제 종료')
-                break
-
-            self.cmd_vel_pub.publish(msg)
-            rclpy.spin_once(self, timeout_sec=0.05)
-
-        self.stop_robot()
-        self.get_logger().info(f'180도 회전 완료 (목표 오차 이내)')
-
     def get_current_yaw(self):
         try:
             t = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
@@ -147,6 +111,7 @@ class AutoNav(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().error('❌ recycle 목표 거절됨')
+            self.object_found = False
             return
 
         result_future = goal_handle.get_result_async()
@@ -157,14 +122,19 @@ class AutoNav(Node):
 
         if not result.success:
             self.get_logger().warn(f'Recycle 실패: {result.message}')
+            self.object_found = False
             return
 
-        self.get_logger().info('✅ Recycle 끝')
+        self.get_logger().info('✅ Recycle 끝 (3초 회전 완료)')
         self.object_found = False
+        
+        # 디텍터 초기화 시그널 송신
         self.reset_detector_pub.publish(Empty())
         self.get_logger().info('📡 Published /reset_object_detector')
 
-        self.get_logger().info(f'↩️ 원래 목표로 복귀: ({self.resume_x:.2f}, {self.resume_y:.2f})')
+        # [변경] 원래 목표지로 복귀 명령 시 복귀 플래그 ON
+        self.is_resuming = True
+        self.get_logger().info(f'↩️ 원래 목표로 복귀 시작: ({self.resume_x:.2f}, {self.resume_y:.2f})')
         self.send_goal(self.resume_x, self.resume_y)
 
     def send_next_goal(self):
@@ -223,9 +193,6 @@ class AutoNav(Node):
 
         x, y = self.waypoints[self.current_idx]
         self.get_logger().info(f'✅ Reached ({x:.2f}, {y:.2f})')
-        if self.current_idx in (1, 3):
-            self.get_logger().info('🔄 Waypoint 1 도착, 180도 회전 시작')
-            self.rotate_180()
         self.current_idx += 1
 
         self.send_next_goal()

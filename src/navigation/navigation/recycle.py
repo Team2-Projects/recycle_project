@@ -56,7 +56,7 @@ class Recycle(Node):
 
         if self.go_home():
             self.move_backward()
-            self.rotate_180()
+            self.rotate_timed(5.0)
             result.success = True
             result.message = "done"
             goal_handle.succeed()
@@ -118,41 +118,23 @@ class Recycle(Node):
 
         self.stop_robot()
 
-    def rotate_180(self):
-        start_yaw = self.get_current_yaw()
-        if start_yaw is None:
-            self.get_logger().warn('TF 획득 실패, 회전 스킵')
-            return
-
-        target_yaw = normalize_angle(start_yaw + math.pi)  # 180도 목표
-
+    def rotate_timed(self, duration=3.0):
+        self.get_logger().info(f'시간 기반 회전 시작: {duration}초 동안 회전')
+        
         msg = Twist()
-        msg.linear.x = 0.0       # 제자리 회전이므로 전진/후진 없음
-        msg.angular.z = 0.5      # 반시계 방향 (라디안/초)
+        msg.linear.x = 0.0
+        msg.angular.z = 0.5  # 회전 속도 (필요시 조절 가능, 대략 0.5rad/s)
 
-        angle_tolerance = math.radians(3.0)  # 3도 오차까지 허용
-        timeout = time.time() + 10.0         # 안전장치: 10초 넘으면 강제 종료
-
-        while rclpy.ok():
-            current_yaw = self.get_current_yaw()
-            if current_yaw is None:
-                rclpy.spin_once(self, timeout_sec=0.1)
-                continue
-
-            diff = abs(normalize_angle(target_yaw - current_yaw))
-
-            if diff <= angle_tolerance:
+        start_time = time.time()
+        while time.time() - start_time < duration:
+            if not rclpy.ok():
                 break
-
-            if time.time() > timeout:
-                self.get_logger().warn('회전 타임아웃, 강제 종료')
-                break
-
             self.cmd_vel_pub.publish(msg)
-            rclpy.spin_once(self, timeout_sec=0.05)
+            time.sleep(0.05)  # 20Hz 주기로 속도 명령 발행
 
         self.stop_robot()
-        self.get_logger().info(f'180도 회전 완료 (목표 오차 이내)')
+        time.sleep(0.3)  # 로봇이 완전히 멈출 때까지 잠시 대기
+        self.get_logger().info(f'{duration}초 회전 완료 및 정지')
 
     def stop_robot(self):
         stop_msg = Twist()
