@@ -9,7 +9,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "action/Recycle.action"
+  "action/RecycleActionMsg.action"
 )
 
 if(BUILD_TESTING)

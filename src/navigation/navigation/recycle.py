@@ -1,10 +1,12 @@
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionClient
+from rclpy.action import ActionClient, ActionServer
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped, Twist
 from tf2_ros import Buffer, TransformListener, TransformException
-from navigation_interface.srv import RecycleActionMsg
+from navigation_interface.action import RecycleActionMsg
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 import math
 import time
 
@@ -19,14 +21,14 @@ class Recycle(Node):
 
         self._action_server = ActionServer(
             self,
-            Recycle,
+            RecycleActionMsg,
             'recycle_action',
             execute_callback=self.execute_callback,
             callback_group=self.cb_group
         )
 
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-        self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self._nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -72,50 +74,30 @@ class Recycle(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
 
     def go_home(self) -> bool:
-        try:
-            pose = PoseStamped()
-            pose.header.frame_id = 'map'
-            pose.header.stamp = self.get_clock().now().to_msg()
-            pose.pose.position.x = self.home_x
-            pose.pose.position.y = self.home_y
-            pose.pose.orientation.w = 1.0
+        pose = PoseStamped()
+        pose.header.frame_id = 'map'
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.pose.position.x = self.home_x
+        pose.pose.position.y = self.home_y
+        pose.pose.orientation.w = 1.0
 
-            goal_msg = NavigateToPose.Goal()
-            goal_msg.pose = pose
+        goal_msg = NavigateToPose.Goal()
+        goal_msg.pose = pose
 
-            self._action_client.wait_for_server()
-            self.get_logger().info('1️⃣ wait_for_server 통과')
+        self._nav_client.wait_for_server()
+        send_goal_future = self._nav_client.send_goal_async(goal_msg)
+        rclpy.spin_until_future_complete(self, send_goal_future)
+        nav_goal_handle = send_goal_future.result()
 
-            send_goal_future = self._action_client.send_goal_async(goal_msg)
-            rclpy.spin_until_future_complete(self, send_goal_future)
-            self.get_logger().info('2️⃣ send_goal_future 완료')
-
-            goal_handle = send_goal_future.result()
-            self.get_logger().info(f'3️⃣ goal_handle = {goal_handle}')
-
-            if goal_handle is None:
-                self.get_logger().error('❌ goal_handle이 None입니다')
-                return False
-
-            if not goal_handle.accepted:
-                self.get_logger().warn('HOME goal rejected!')
-                return False
-
-            result_future = goal_handle.get_result_async()
-            rclpy.spin_until_future_complete(self, result_future)
-            self.get_logger().info('4️⃣ result_future 완료')
-
-            result = result_future.result()
-            self.get_logger().info(f'5️⃣ result = {result}')
-
-            self.get_logger().info('✅ HOME 도착')
-            return True
-
-        except Exception as e:
-            self.get_logger().error(f'❌ go_home 예외 발생: {e}')
-            import traceback
-            self.get_logger().error(traceback.format_exc())
+        if nav_goal_handle is None or not nav_goal_handle.accepted:
+            self.get_logger().warn('HOME goal rejected!')
             return False
+
+        result_future = nav_goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self, result_future)
+
+        self.get_logger().info('✅ HOME 도착')
+        return True
 
     def get_current_yaw(self):
         try:
@@ -182,9 +164,15 @@ class Recycle(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = Recycle()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+
+    executor = MultiThreadedExecutor()
+    executor.add_node(node)
+    try:
+        executor.spin()
+    finally:
+        executor.shutdown()
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":

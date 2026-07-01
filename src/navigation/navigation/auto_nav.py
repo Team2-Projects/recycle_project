@@ -7,9 +7,8 @@ from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Path
 from tf2_ros import Buffer, TransformListener
 from std_msgs.msg import Empty
-from navigation_interface.srv import RecycleActionMsg
+from navigation_interface.action import RecycleActionMsg
 from action_msgs.msg import GoalStatus
-import subprocess 
 import time
 import math
 from .nav_utils import normalize_angle, get_yaw_from_quaternion
@@ -21,6 +20,7 @@ class AutoNav(Node):
     def __init__(self):
         super().__init__('auto_nav')
         self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self._recycle_client = ActionClient(self, RecycleActionMsg, 'recycle_action')
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.reset_detector_pub = self.create_publisher(Empty, '/reset_object_detector', 10)
 
@@ -45,8 +45,6 @@ class AutoNav(Node):
 
         self.create_subscription(Path, '/coverage_path', self.path_callback, latched_qos)
         self.create_subscription(PoseStamped, '/object_pose', self.object_callback, latched_qos)
-        
-        self.client = self.create_client(RecycleSrv, "recycle_service")
         
         self.get_logger().info('AutoNav Ready.')
 
@@ -132,27 +130,36 @@ class AutoNav(Node):
         if self.current_handle is not None:
             self.current_handle.cancel_goal_async()
 
-    def launch_recycle_action_node(self):
-        req = RecycleSrv.Request()
-        req.index = self.current_idx
-        req.home_x = self.home_x
-        req.home_y = self.home_y
-        req.center_x = self.center_x
-        req.center_y = self.center_y
+    def launch_recycle_action(self):
+        goal_msg = RecycleActionMsg.Goal()
+        goal_msg.index = self.current_idx
+        goal_msg.home_x = self.home_x
+        goal_msg.home_y = self.home_y
+        goal_msg.center_x = self.center_x
+        goal_msg.center_y = self.center_y
 
-        self.get_logger().info('🚀 Calling recycle_service (HOME 이동 + 후진 + 회전)')
-        self.client.wait_for_service()
-        future = self.client.call_async(req)
-        future.add_done_callback(self.check_recycle_action_done)
+        self.get_logger().info('🚀 recycle_action 호출 (HOME 이동 + 후진 + 회전)')
+        self._recycle_client.wait_for_server()
+        future = self._recycle_client.send_goal_async(goal_msg)
+        future.add_done_callback(self.recycle_goal_response_callback)
 
-    def check_recycle_action_done(self, future):
-        res = future.result()
-
-        if not res.success:
-            self.get_logger().warn(f'Recycle 실패: {res.message}')
+    def recycle_goal_response_callback(self, future):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().error('❌ recycle 목표 거절됨')
             return
-        
-        self.get_logger().info("Recycle 끝")
+
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self.recycle_result_callback)
+
+    def recycle_result_callback(self, future):
+        result = future.result().result
+
+        if not result.success:
+            self.get_logger().warn(f'Recycle 실패: {result.message}')
+            return
+
+        self.get_logger().info('✅ Recycle 끝')
         self.object_found = False
         self.reset_detector_pub.publish(Empty())
         self.get_logger().info('📡 Published /reset_object_detector')
@@ -211,7 +218,7 @@ class AutoNav(Node):
         if status == GoalStatus.STATUS_CANCELED:
             if self.object_found:
                 self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
-                self.launch_recycle_action_node()
+                self.launch_recycle_action()
             return
 
         x, y = self.waypoints[self.current_idx]
