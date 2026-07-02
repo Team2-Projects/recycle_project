@@ -6,6 +6,7 @@ from rclpy.action import ActionClient, ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.task import Future
+from rclpy.duration import Duration
 
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped, Twist
@@ -36,6 +37,10 @@ class Recycle(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
+        self._tick_period = 0.02  # 50Hz
+        self._tick_waiters = []   # list of (target_time, future)
+        self._tick_timer = self.create_timer(self._tick_period, self._on_tick)
+
         self.warmup()
         self.get_logger().info("Recycle Done")
 
@@ -46,8 +51,47 @@ class Recycle(Node):
         while (self.get_clock().now() - start_time).nanoseconds < 1.0e9:
             rclpy.spin_once(self, timeout_sec=0.1)
 
+    def _on_tick(self):
+        if not self._tick_waiters:
+            return
+        now = self.get_clock().now()
+        remaining = []
+        for target_time, future in self._tick_waiters:
+            if future.done():
+                continue
+            if now >= target_time:
+                future.set_result(None)
+            else:
+                remaining.append((target_time, future))
+        self._tick_waiters = remaining
+
+    async def _sleep(self, duration: float):
+        future = Future()
+        target_time = self.get_clock().now() + Duration(seconds=duration)
+        self._tick_waiters.append((target_time, future))
+        try:
+            await future
+        finally:
+            # 태스크가 취소되는 경우에도 waiter 목록에 남아있지 않도록 정리
+            if not future.done():
+                future.cancel()
+
+    # 주어진 Twist를 rate_hz 주기로 publish하면서 duration 초 동안 기다린다.
+    # 별도 publish용 타이머를 만들지 않고 _sleep으로 쪼개면서 그 사이 publish한다.
+    async def _publish_for_duration(self, twist: Twist, duration: float, rate_hz: float = 20.0):
+        period = 1.0 / rate_hz
+        elapsed = 0.0
+        try:
+            while elapsed < duration:
+                self.cmd_vel_pub.publish(twist)
+                await self._sleep(period)
+                elapsed += period
+        finally:
+            self.stop_robot()
+
     async def execute_callback(self, goal_handle):
         request = goal_handle.request
+        self.index = request.index
         self.home_x = request.home_x
         self.home_y = request.home_y
         self.center_x = request.center_x
@@ -85,8 +129,19 @@ class Recycle(Node):
             pose = PoseStamped()
             pose.header.frame_id = 'map'
             pose.header.stamp = self.get_clock().now().to_msg()
-            pose.pose.position.x = self.home_x
-            pose.pose.position.y = self.home_y
+            if self.index == 0:
+                pose.pose.position.x = self.recycle_point0_x
+                pose.pose.position.y = self.recycle_point0_y
+            elif self.index == 1:
+                pose.pose.position.x = self.recycle_point1_x
+                pose.pose.position.y = self.recycle_point1_y
+            elif self.index == 2:
+                pose.pose.position.x = self.recycle_point2_x
+                pose.pose.position.y = self.recycle_point2_y
+            else:
+                pose.pose.position.x = self.home_x
+                pose.pose.position.y = self.home_y
+
             pose.pose.orientation.w = 1.0
 
             goal_msg = NavigateToPose.Goal()
@@ -125,31 +180,6 @@ class Recycle(Node):
         except TransformException:
             return None
 
-    async def _sleep(self, duration: float):
-        future = Future()
-
-        def _on_timer():
-            if not future.done():
-                future.set_result(None)
-
-        timer = self.create_timer(duration, _on_timer)
-        try:
-            await future
-        finally:
-            timer.cancel()
-            self.destroy_timer(timer)
-
-    # 주어진 Twist를 rate_hz 주기로 publish하면서 duration 초 동안 기다린다.
-    async def _publish_for_duration(self, twist: Twist, duration: float, rate_hz: float = 20.0):
-        period = 1.0 / rate_hz
-        pub_timer = self.create_timer(period, lambda: self.cmd_vel_pub.publish(twist))
-        try:
-            await self._sleep(duration)
-        finally:
-            pub_timer.cancel()
-            self.destroy_timer(pub_timer)
-            self.stop_robot()
-
     async def move_backward(self, duration: float = 2.0, speed: float = -0.2):
         msg = Twist()
         msg.linear.x = speed
@@ -173,29 +203,40 @@ class Recycle(Node):
         max_duration = 10.0                  # 안전장치: 10초 넘으면 강제 종료
         elapsed = 0.0
 
-        while elapsed < max_duration:
-            current_yaw = self.get_current_yaw()
+        try:
+            while elapsed < max_duration:
+                current_yaw = self.get_current_yaw()
 
-            if current_yaw is not None:
-                diff = abs(normalize_angle(target_yaw - current_yaw))
-                if diff <= angle_tolerance:
-                    break
-                self.cmd_vel_pub.publish(msg)
+                if current_yaw is not None:
+                    diff = abs(normalize_angle(target_yaw - current_yaw))
+                    if diff <= angle_tolerance:
+                        break
+                    self.cmd_vel_pub.publish(msg)
 
-            await self._sleep(control_period)
-            elapsed += control_period
+                await self._sleep(control_period)
+                elapsed += control_period
 
-        if elapsed >= max_duration:
-            self.get_logger().warn('회전 타임아웃, 강제 종료')
+            if elapsed >= max_duration:
+                self.get_logger().warn('회전 타임아웃, 강제 종료')
 
-        self.stop_robot()
-        self.get_logger().info('180도 회전 완료 (목표 오차 이내)')
+            self.get_logger().info('180도 회전 완료 (목표 오차 이내)')
+        finally:
+            self.stop_robot()
 
     def stop_robot(self):
         stop_msg = Twist()
         stop_msg.linear.x = 0.0
         stop_msg.angular.z = 0.0
         self.cmd_vel_pub.publish(stop_msg)
+
+    def destroy_node(self):
+        # 노드 종료 시 공용 tick 타이머 정리
+        try:
+            self._tick_timer.cancel()
+            self.destroy_timer(self._tick_timer)
+        except Exception:
+            pass
+        super().destroy_node()
 
 
 def main(args=None):
@@ -206,10 +247,14 @@ def main(args=None):
     executor.add_node(node)
     try:
         executor.spin()
+    except KeyboardInterrupt:
+        pass
     finally:
         executor.shutdown()
         node.destroy_node()
-        rclpy.shutdown()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
