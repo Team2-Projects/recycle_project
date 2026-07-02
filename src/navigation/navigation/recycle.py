@@ -1,14 +1,17 @@
+import math
+
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient, ActionServer
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.task import Future
+
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped, Twist
 from tf2_ros import Buffer, TransformListener, TransformException
+
 from navigation_interface.action import RecycleActionMsg
-from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
-import math
-import time
 
 from .nav_utils import normalize_angle, get_yaw_from_quaternion
 
@@ -28,7 +31,7 @@ class Recycle(Node):
         )
 
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-        self._nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -36,7 +39,14 @@ class Recycle(Node):
         self.warmup()
         self.get_logger().info("Recycle Done")
 
-    def execute_callback(self, goal_handle):
+    # 노드 생성 직후 TF 버퍼가 채워질 시간을 준다. __init__ 안이라 아직
+    # executor.spin()이 돌기 전이므로 여기서는 blocking spin_once로 충분하다.
+    def warmup(self):
+        start_time = self.get_clock().now()
+        while (self.get_clock().now() - start_time).nanoseconds < 1.0e9:
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+    async def execute_callback(self, goal_handle):
         request = goal_handle.request
         self.home_x = request.home_x
         self.home_y = request.home_y
@@ -50,13 +60,15 @@ class Recycle(Node):
         self.recycle_point2_x = self.home_x - 1.0
         self.recycle_point2_y = self.home_y - 0.1
 
-        self.get_logger().info(f"Recycle Start: HOME으로 이동 ({self.home_x:.2f}, {self.home_y:.2f})")
+        self.get_logger().info(
+            f"Recycle Start: HOME으로 이동 ({self.home_x:.2f}, {self.home_y:.2f})"
+        )
 
         result = RecycleActionMsg.Result()
 
-        if self.go_home():
-            self.move_backward()
-            self.rotate_timed(5.0)
+        if await self.go_home():
+            await self.move_backward()
+            await self.rotate_180()
             result.success = True
             result.message = "done"
             goal_handle.succeed()
@@ -68,36 +80,43 @@ class Recycle(Node):
 
         return result
 
-    def warmup(self):
-        start_time = time.time()
-        while time.time() - start_time < 1.0:
-            rclpy.spin_once(self, timeout_sec=0.1)
+    async def go_home(self) -> bool:
+        try:
+            pose = PoseStamped()
+            pose.header.frame_id = 'map'
+            pose.header.stamp = self.get_clock().now().to_msg()
+            pose.pose.position.x = self.home_x
+            pose.pose.position.y = self.home_y
+            pose.pose.orientation.w = 1.0
 
-    def go_home(self) -> bool:
-        pose = PoseStamped()
-        pose.header.frame_id = 'map'
-        pose.header.stamp = self.get_clock().now().to_msg()
-        pose.pose.position.x = self.home_x
-        pose.pose.position.y = self.home_y
-        pose.pose.orientation.w = 1.0
+            goal_msg = NavigateToPose.Goal()
+            goal_msg.pose = pose
 
-        goal_msg = NavigateToPose.Goal()
-        goal_msg.pose = pose
+            self._action_client.wait_for_server()
+            self.get_logger().info('1️⃣ wait_for_server 통과')
 
-        self._nav_client.wait_for_server()
-        send_goal_future = self._nav_client.send_goal_async(goal_msg)
-        rclpy.spin_until_future_complete(self, send_goal_future)
-        nav_goal_handle = send_goal_future.result()
+            goal_handle = await self._action_client.send_goal_async(goal_msg)
+            self.get_logger().info(f'2️⃣ goal_handle = {goal_handle}')
 
-        if nav_goal_handle is None or not nav_goal_handle.accepted:
-            self.get_logger().warn('HOME goal rejected!')
+            if goal_handle is None:
+                self.get_logger().error('❌ goal_handle이 None입니다')
+                return False
+
+            if not goal_handle.accepted:
+                self.get_logger().warn('HOME goal rejected!')
+                return False
+
+            result = await goal_handle.get_result_async()
+            self.get_logger().info(f'3️⃣ result = {result}')
+
+            self.get_logger().info('✅ HOME 도착')
+            return True
+
+        except Exception as e:
+            self.get_logger().error(f'❌ go_home 예외 발생: {e}')
+            import traceback
+            self.get_logger().error(traceback.format_exc())
             return False
-
-        result_future = nav_goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future)
-
-        self.get_logger().info('✅ HOME 도착')
-        return True
 
     def get_current_yaw(self):
         try:
@@ -106,35 +125,71 @@ class Recycle(Node):
         except TransformException:
             return None
 
-    def move_backward(self):
+    async def _sleep(self, duration: float):
+        future = Future()
+
+        def _on_timer():
+            if not future.done():
+                future.set_result(None)
+
+        timer = self.create_timer(duration, _on_timer)
+        try:
+            await future
+        finally:
+            timer.cancel()
+            self.destroy_timer(timer)
+
+    # 주어진 Twist를 rate_hz 주기로 publish하면서 duration 초 동안 기다린다.
+    async def _publish_for_duration(self, twist: Twist, duration: float, rate_hz: float = 20.0):
+        period = 1.0 / rate_hz
+        pub_timer = self.create_timer(period, lambda: self.cmd_vel_pub.publish(twist))
+        try:
+            await self._sleep(duration)
+        finally:
+            pub_timer.cancel()
+            self.destroy_timer(pub_timer)
+            self.stop_robot()
+
+    async def move_backward(self, duration: float = 2.0, speed: float = -0.2):
         msg = Twist()
-        msg.linear.x = -0.2
+        msg.linear.x = speed
         msg.angular.z = 0.0
+        await self._publish_for_duration(msg, duration)
 
-        start_time = time.time()
-        while time.time() - start_time < 2.0:
-            self.cmd_vel_pub.publish(msg)
-            rclpy.spin_once(self, timeout_sec=0.1)
+    async def rotate_180(self):
+        start_yaw = self.get_current_yaw()
+        if start_yaw is None:
+            self.get_logger().warn('TF 획득 실패, 회전 스킵')
+            return
 
-        self.stop_robot()
+        target_yaw = normalize_angle(start_yaw + math.pi)  # 180도 목표
 
-    def rotate_timed(self, duration=3.0):
-        self.get_logger().info(f'시간 기반 회전 시작: {duration}초 동안 회전')
-        
         msg = Twist()
         msg.linear.x = 0.0
-        msg.angular.z = 0.5  # 회전 속도 (필요시 조절 가능, 대략 0.5rad/s)
+        msg.angular.z = 0.5
 
-        start_time = time.time()
-        while time.time() - start_time < duration:
-            if not rclpy.ok():
-                break
-            self.cmd_vel_pub.publish(msg)
-            time.sleep(0.05)  # 20Hz 주기로 속도 명령 발행
+        angle_tolerance = math.radians(8.0)  # 8도 오차까지 허용
+        control_period = 0.05                # 20Hz 제어 주기
+        max_duration = 10.0                  # 안전장치: 10초 넘으면 강제 종료
+        elapsed = 0.0
+
+        while elapsed < max_duration:
+            current_yaw = self.get_current_yaw()
+
+            if current_yaw is not None:
+                diff = abs(normalize_angle(target_yaw - current_yaw))
+                if diff <= angle_tolerance:
+                    break
+                self.cmd_vel_pub.publish(msg)
+
+            await self._sleep(control_period)
+            elapsed += control_period
+
+        if elapsed >= max_duration:
+            self.get_logger().warn('회전 타임아웃, 강제 종료')
 
         self.stop_robot()
-        time.sleep(0.3)  # 로봇이 완전히 멈출 때까지 잠시 대기
-        self.get_logger().info(f'{duration}초 회전 완료 및 정지')
+        self.get_logger().info('180도 회전 완료 (목표 오차 이내)')
 
     def stop_robot(self):
         stop_msg = Twist()
