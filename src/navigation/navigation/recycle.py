@@ -97,11 +97,11 @@ class Recycle(Node):
         self.center_x = request.center_x
         self.center_y = request.center_y
 
-        self.recycle_point0_x = self.home_x - 1.0
+        self.recycle_point0_x = self.home_x - 0.3
         self.recycle_point0_y = self.home_y + 0.1
-        self.recycle_point1_x = self.home_x - 1.0
+        self.recycle_point1_x = self.home_x - 0.3
         self.recycle_point1_y = self.home_y
-        self.recycle_point2_x = self.home_x - 1.0
+        self.recycle_point2_x = self.home_x - 0.3
         self.recycle_point2_y = self.home_y - 0.1
 
         self.get_logger().info(

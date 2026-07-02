@@ -10,11 +10,6 @@ def generate_launch_description():
         name='coverage_node'
     )
 
-    object_detector = Node(
-        package='navigation',
-        executable='object_detector',
-        name='object_detector'
-    )
 
     recycle = Node(
         package='navigation',
@@ -31,7 +26,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         coverage,
-        object_detector,
         recycle,
         auto_nav
     ])

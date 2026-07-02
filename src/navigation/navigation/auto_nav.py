@@ -11,8 +11,9 @@ from navigation_interface.action import RecycleActionMsg
 from action_msgs.msg import GoalStatus
 import time
 import math
+
+from my_yolo_cpp_pkg import detected_object_id
 from .nav_utils import normalize_angle, get_yaw_from_quaternion
-# from my_yolo_cpp_pkg import detected_object_id
 
 ACTION_RECYCLE_NODE = 'action_recycle_node'
 
@@ -40,6 +41,7 @@ class AutoNav(Node):
         self.resume_x = None
         self.resume_y = None
         self.current_handle = None
+        self.is_resuming = False  
 
         latched_qos = QoSProfile(
             depth=1,
@@ -48,14 +50,13 @@ class AutoNav(Node):
         )
 
         self.create_subscription(Path, '/coverage_path', self.path_callback, latched_qos)
-        self.create_subscription(PoseStamped, '/object_pose', self.object_callback, latched_qos)
         
-        # self.object_sub = self.create_subscription(
-        #     detected_object_id.DetectedObject,
-        #     '/detected_object_info',
-        #     self.object_callback,
-        #     10
-        # )
+        self.object_sub = self.create_subscription(
+            detected_object_id.DetectedObject,
+            '/detected_object_info',
+            self.object_callback,
+            10
+        )
 
         self.get_logger().info('AutoNav Ready.')
 
@@ -74,7 +75,7 @@ class AutoNav(Node):
             t = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
             return t.transform.translation.x, t.transform.translation.y
         except:
-            return self.home_x, self.home_y  # fallback
+            return self.home_x, self.home_y  
 
     def path_callback(self, msg):
         if self.is_running:
@@ -96,43 +97,49 @@ class AutoNav(Node):
         if self.object_found:
             return
 
-        self.object_found = True
-
-        self.resume_x, self.resume_y = self.waypoints[self.current_idx]
+        # -1이면 아무것도 안함
+        if msg.id == -1:
+            return
+        
+        # 🟢 물체 발견 시 로직 보강
+        else:
+            self.object_found = True
+            self.objcet_id = msg.id
             
-        if self.current_handle is not None:
-            self.current_handle.cancel_goal_async()
+            # [보안] 데이터 형식을 안전하게 일반 파이썬 리스트로 변환하여 저장
+            self.coord = [float(val) for val in msg.coord]
 
-        # if msg.id == -1:
-        #     self.get_logger().info('탐지 물체 없음')
-        # else:
-        #     self.get_logger().info("물체 발견")
-        #     self.objcet_id = msg.id
-        #     self.coord = msg.coord
+            x, y, w, h = self.coord
+            self.get_logger().info(f'🎯 [물체 발견] ID: {msg.id} | 좌표: ({x:.2f}, {y:.2f}) | 크기: {w:.2f}x{h:.2f}')
 
-        #     # 재개용 원래 목표 저장
-        #     self.resume_x, self.resume_y = self.waypoints[self.current_idx]
+            # 재개용 원래 목표 저장
+            if self.current_idx < len(self.waypoints):
+                self.resume_x, self.resume_y = self.waypoints[self.current_idx]
             
-        #     if self.current_handle is not None:
-        #         self.current_handle.cancel_goal_async()
+            # [보안] 혹시 모를 충돌을 방지하기 위해 로봇에게 즉시 정지 명령을 먼저 날림
+            stop_msg = Twist()
+            self.cmd_vel_pub.publish(stop_msg)
+            
+            # 현재 가던 자율주행 목표 취소
+            if self.current_handle is not None:
+                self.get_logger().info('Nav2 목표 취소 요청 중...')
+                self.current_handle.cancel_goal_async()
+            else:
+                # 만약 가고 있던 목표 핸들이 없다면 즉시 리사이클 실행
+                self.launch_recycle_action()
 
     def setting_recycle(self):
-        # 일단 로봇멈춤
         stop_msg = Twist()
         stop_msg.linear.x = 0.0
         stop_msg.angular.z = 0.0
         self.cmd_vel_pub.publish(stop_msg)
 
-        # x값 중앙과 차이가 적도록 로봇 와리가리
-
-        # 직진을 카메라의 영역차지를 기준으로 조절
         x, y, w, h = self.coord
         self.launch_recycle_action()
 
     def launch_recycle_action(self):
         goal_msg = RecycleActionMsg.Goal()
-        # goal_msg.index = self.objcet_id
-        goal_msg.index = 1
+        goal_msg.index = self.objcet_id if self.objcet_id is not None else 1
         goal_msg.home_x = self.home_x
         goal_msg.home_y = self.home_y
         goal_msg.center_x = self.center_x
@@ -163,11 +170,9 @@ class AutoNav(Node):
 
         self.object_found = False
         
-        # 디텍터 초기화 시그널 송신
         self.reset_detector_pub.publish(Empty())
         self.get_logger().info('📡 Published /reset_object_detector')
 
-        # [변경] 원래 목표지로 복귀 명령 시 복귀 플래그 ON
         self.is_resuming = True
         self.get_logger().info(f'↩️ 원래 목표로 복귀 시작: ({self.resume_x:.2f}, {self.resume_y:.2f})')
         self.send_goal(self.resume_x, self.resume_y)
@@ -224,13 +229,16 @@ class AutoNav(Node):
             if self.object_found:
                 self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
                 self.launch_recycle_action()
-                # self.setting_recycle()
             return
 
-        x, y = self.waypoints[self.current_idx]
-        self.get_logger().info(f'✅ Reached ({x:.2f}, {y:.2f})')
+        if self.is_resuming:
+            self.get_logger().info('✅ 끊겼던 지점으로 복귀 완료! 다음 웨이포인트로 주행을 이어갑니다.')
+            self.is_resuming = False
+        else:
+            x, y = self.waypoints[self.current_idx]
+            self.get_logger().info(f'✅ Reached ({x:.2f}, {y:.2f})')
+            
         self.current_idx += 1
-
         self.send_next_goal()
 
     def feedback_callback(self, feedback_msg):
@@ -241,7 +249,13 @@ class AutoNav(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = AutoNav()
-    rclpy.spin(node)
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().info('🛑 사용자에 의해 노드가 정지되었습니다.')
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
