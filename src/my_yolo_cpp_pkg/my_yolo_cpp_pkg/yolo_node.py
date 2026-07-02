@@ -36,7 +36,7 @@ class YoloNode(Node):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         # print(f"이미지 형태 (Shape): {frame_bgr.shape}")
         # # 추론
-        results = self.model.predict(source=frame_rgb, imgsz=640, conf=conf_threshold, verbose=False)
+        results = self.model.predict(source=frame_bgr, imgsz=640, conf=conf_threshold, verbose=False)
         
         # # # 시각화
         res_plotted_rgb = results[0].plot()
