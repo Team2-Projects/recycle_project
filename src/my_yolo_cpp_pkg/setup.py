@@ -28,7 +28,8 @@ setup(
             'collect_action_node = my_yolo_cpp_pkg.collect_action_node:main',
             'img_subs_node = my_yolo_cpp_pkg.img_subscribe:main',
             'img_save_node = my_yolo_cpp_pkg.img_save:main', 
-            'return_object_id_node = my_yolo_cpp_pkg.detected_object_id:main'      
+            'return_object_id_node = my_yolo_cpp_pkg.detected_object_id:main',
+            'best_yolo_node = my_yolo_cpp_pkg.best_yolo_node:main'     
         ],                    
     },
 )
