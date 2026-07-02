@@ -147,7 +147,7 @@ class CoveragePlanner(Node):
         dy = np.abs(safe_ys - self.home_y)
         gx, gy = self.pick_farthest(safe_xs, safe_ys, dy, fix_axis='x')
         self.get_logger().info(f'Y-farthest: ({gx:.2f}, {gy:.2f})')
-        return gx, gy
+        return gx - 0.5, gy
 
     # ── 대각선 최원점 ─────────────────────────────────
     def get_farthest_xy_goal(self, safe_xs, safe_ys):
@@ -157,14 +157,14 @@ class CoveragePlanner(Node):
         idx  = np.argmax(dist)
         gx, gy = float(safe_xs[idx]), float(safe_ys[idx])
         self.get_logger().info(f'XY-farthest: ({gx:.2f}, {gy:.2f})  dist={dist[idx]:.2f}m')
-        return gx, gy 
+        return gx + 0.2, gy 
 
     # ── 홈(Home)과 대각선 끝점(XY)의 딱 중간 점 구하기 ──
     def get_center_goal(self, xy_far_x, xy_far_y):
         target_center_x = (self.home_x + xy_far_x) / 2.0
         target_center_y = (self.home_y + xy_far_y) / 2.0
 
-        return target_center_x, target_center_y
+        return target_center_x - 0.3, target_center_y
 
     # ── 경로 발행 ─────────────────────────────────────
     def publish_path(self):
@@ -226,6 +226,7 @@ def main(args=None):
     rclpy.init(args=args)
     node = CoveragePlanner()
 
+    # 1. 경로가 발행될 때까지는 이전처럼 spin_once로 체크하며 돕니다.
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=0.1)
         if node.path_published:
@@ -234,8 +235,21 @@ def main(args=None):
     node.get_logger().info('waiting short delay for network buffer transmission...')
     time.sleep(1.5)
 
-    node.destroy_node()
-    rclpy.shutdown()
+    # -------------------------------------------------------------
+    # ❌ [기존 코드] 바로 종료해버리던 부분
+    # node.destroy_node()
+    # rclpy.shutdown()
+    # -------------------------------------------------------------
+
+    # ⭕ [수정 코드] 경로 발행 후 노드를 파괴하지 않고, 사용자가 끄기 전까지 계속 살려둡니다.
+    node.get_logger().info('📡 경로 발행 완료! 오토네브가 데이터를 주워갈 수 있도록 노드를 유지합니다. (Ctrl+C로 종료)')
+    try:
+        rclpy.spin(node)  # 이제 여기서 대기하므로 뒤늦게 켜진 오토네브가 경로를 완벽히 가져갑니다.
+    except KeyboardInterrupt:
+        node.get_logger().info('🛑 사용자에 의해 코버리지 노드가 종료되었습니다.')
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

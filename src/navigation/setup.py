@@ -30,7 +30,7 @@ setup(
         'console_scripts': [
             'auto_nav = navigation.auto_nav:main',
             'coverage_node = navigation.coverage_node:main',
-            'object_detector = navigation.object_detector:main'
+            'recycle = navigation.recycle:main'
         ],
     },
 )
