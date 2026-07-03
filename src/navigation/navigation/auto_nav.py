@@ -102,6 +102,7 @@ class AutoNav(Node):
             return
         else:
             self.object_found = True
+            self.objcet_id = msg.id
 
             # 재개용 원래 목표 저장
             if self.current_idx < len(self.waypoints):
@@ -127,6 +128,7 @@ class AutoNav(Node):
     def recycle_tracking_goal_response_callback(self, future):
         goal_handle = future.result()
         if not goal_handle.accepted:
+            self.send_goal(self.resume_x, self.resume_y)
             return
 
         result_future = goal_handle.get_result_async()
@@ -230,6 +232,11 @@ class AutoNav(Node):
             if self.object_found:
                 self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
                 self.launch_recycle_tracking_action()
+            return
+
+        if status == GoalStatus.STATUS_ABORTED:
+            self.get_logger().error("Goal Aborted by Nav2")
+            self.send_next_goal()
             return
 
         if self.is_resuming:

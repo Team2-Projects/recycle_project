@@ -97,12 +97,12 @@ class Recycle(Node):
         self.center_x = request.center_x
         self.center_y = request.center_y
 
-        self.recycle_point0_x = self.home_x - 0.3
-        self.recycle_point0_y = self.home_y + 0.1
-        self.recycle_point1_x = self.home_x - 0.3
+        self.recycle_point0_x = self.home_x - 0.6
+        self.recycle_point0_y = self.home_y + 0.2
+        self.recycle_point1_x = self.home_x - 0.6
         self.recycle_point1_y = self.home_y
-        self.recycle_point2_x = self.home_x - 0.3
-        self.recycle_point2_y = self.home_y - 0.1
+        self.recycle_point2_x = self.home_x - 0.6
+        self.recycle_point2_y = self.home_y - 0.2
 
         self.get_logger().info(
             f"Recycle Start: HOME으로 이동 ({self.home_x:.2f}, {self.home_y:.2f})"
@@ -112,7 +112,7 @@ class Recycle(Node):
 
         if await self.go_home():
             await self.move_backward()
-            await self.rotate_180()
+            await self.rotate_100()
             result.success = True
             result.message = "done"
             goal_handle.succeed()
@@ -136,6 +136,7 @@ class Recycle(Node):
                 pose.pose.position.x = self.recycle_point1_x
                 pose.pose.position.y = self.recycle_point1_y
             elif self.index == 2:
+                self.get_logger().info("asdf")
                 pose.pose.position.x = self.recycle_point2_x
                 pose.pose.position.y = self.recycle_point2_y
             else:
@@ -180,19 +181,19 @@ class Recycle(Node):
         except TransformException:
             return None
 
-    async def move_backward(self, duration: float = 2.0, speed: float = -0.2):
+    async def move_backward(self, duration: float = 3.0, speed: float = -0.2):
         msg = Twist()
         msg.linear.x = speed
         msg.angular.z = 0.0
         await self._publish_for_duration(msg, duration)
 
-    async def rotate_180(self):
+    async def rotate_100(self):
         start_yaw = self.get_current_yaw()
         if start_yaw is None:
             self.get_logger().warn('TF 획득 실패, 회전 스킵')
             return
 
-        target_yaw = normalize_angle(start_yaw + math.pi)  # 180도 목표
+        target_yaw = normalize_angle(start_yaw + math.radians(100))  # 100도 목표
 
         msg = Twist()
         msg.linear.x = 0.0
