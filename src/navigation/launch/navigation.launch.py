@@ -10,11 +10,16 @@ def generate_launch_description():
         name='coverage_node'
     )
 
-
     recycle = Node(
         package='navigation',
         executable='recycle',
         name='recycle'
+    )
+
+    recycle_tracking_node = Node(
+        package='navigation',
+        executable='recycle_tracking_node',
+        name='recycle_tracking_node'
     )
 
     auto_nav = Node(
@@ -27,5 +32,6 @@ def generate_launch_description():
     return LaunchDescription([
         coverage,
         recycle,
+        recycle_tracking_node,
         auto_nav
     ])

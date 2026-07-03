@@ -102,13 +102,6 @@ class AutoNav(Node):
             return
         else:
             self.object_found = True
-            self.objcet_id = msg.id
-            
-            # [보안] 데이터 형식을 안전하게 일반 파이썬 리스트로 변환하여 저장
-            self.coord = [float(val) for val in msg.coord]
-
-            x, y, w, h = self.coord
-            self.get_logger().info(f'🎯 [물체 발견] ID: {msg.id} | 좌표: ({x:.2f}, {y:.2f}) | 크기: {w:.2f}x{h:.2f}')
 
             # 재개용 원래 목표 저장
             if self.current_idx < len(self.waypoints):
@@ -122,12 +115,10 @@ class AutoNav(Node):
             if self.current_handle is not None:
                 self.get_logger().info('Nav2 목표 취소 요청 중...')
                 self.current_handle.cancel_goal_async()
-            else:
-                # 만약 가고 있던 목표 핸들이 없다면 즉시 리사이클 실행
-                self.launch_recycle_action()
 
     # recycle_tracking
     def launch_recycle_tracking_action(self):
+        goal_msg = RecycleActionMsg.Goal()
         self.get_logger().info('🚀 recycle_tracking_action 호출 (정지+회전+직진)')
         self._recycle_tracking_client.wait_for_server()
         future = self._recycle_tracking_client.send_goal_async(goal_msg)
@@ -238,7 +229,7 @@ class AutoNav(Node):
         if status == GoalStatus.STATUS_CANCELED:
             if self.object_found:
                 self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
-                self.setting_recycle()
+                self.launch_recycle_tracking_action()
             return
 
         if self.is_resuming:
