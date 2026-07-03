@@ -100,8 +100,6 @@ class AutoNav(Node):
         # -1이면 아무것도 안함
         if msg.id == -1:
             return
-        
-        # 🟢 물체 발견 시 로직 보강
         else:
             self.object_found = True
             self.objcet_id = msg.id
@@ -129,13 +127,45 @@ class AutoNav(Node):
                 self.launch_recycle_action()
 
     def setting_recycle(self):
+        # 정지
         stop_msg = Twist()
         stop_msg.linear.x = 0.0
         stop_msg.angular.z = 0.0
         self.cmd_vel_pub.publish(stop_msg)
-
+        
+        # 회전
         x, y, w, h = self.coord
+        IMAGE_WIDTH = 640
+        HFOV = math.radians(62.2)
+        error = x - IMAGE_WIDTH / 2
+        angle = error / IMAGE_WIDTH * HFOV
+        current_yaw = self.get_current_yaw()
+        angle_tolerance = math.radians(4.0)
+        if current_yaw is None:
+            return
+        target_yaw = normalize_angle(current_yaw + angle)
+        while True:
+            current_yaw = self.get_current_yaw()
+            if current_yaw is not None:
+                diff = abs(normalize_angle(target_yaw - current_yaw))
+                if abs(diff) <= angle_tolerance:
+                    break
+                self.cmd_vel_pub.publish(msg)
+
+        # 회전 끝 정지
+        msg.angular.z = 0.0
+        self.cmd_vel_pub.publish(msg)
+
+        # 물체까지 직진
+        
         self.launch_recycle_action()
+
+    def get_current_yaw(self):
+        try:
+            t = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
+            return get_yaw_from_quaternion(t.transform.rotation)
+        except TransformException:
+            return None
 
     def launch_recycle_action(self):
         goal_msg = RecycleActionMsg.Goal()
@@ -228,7 +258,7 @@ class AutoNav(Node):
         if status == GoalStatus.STATUS_CANCELED:
             if self.object_found:
                 self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
-                self.launch_recycle_action()
+                self.setting_recycle()
             return
 
         if self.is_resuming:
