@@ -1,4 +1,5 @@
 import rclpy
+import asyncio
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from my_yolo_msgs.msg import DetectedObject
@@ -6,9 +7,18 @@ from my_yolo_msgs.msg import DetectedObject
 class RecycleTrackingNode(Node):
     def __init__(self):
         super().__init__('recycle_tracking_node')
+
+        self._action_server = ActionServer(
+            self,
+            RecycleActionMsg,
+            'recycle_tracking_action',
+            execute_callback=self.execute_callback,
+            callback_group=self.cb_group
+        )
         
         # 제어 플래그
         self.align_completed = False
+        self.action_finished = False
 
         # 1. 퍼블리셔 및 구독자 설정
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -18,6 +28,18 @@ class RecycleTrackingNode(Node):
             DetectedObject, '/detected_object_info', self.yolo_callback, 10)
 
         self.get_logger().info("♻️ 실시간 분리수거 정렬 및 4초 직진 노드가 시작되었습니다.")
+
+    async def execute_callback(self, goal_handle):
+        self.action_finished = False
+        self.align_completed = False
+
+        while not self.action_finished:
+            await asyncio.sleep(0.05)
+        goal_handle.succeed()
+        
+        result = RecycleActionMsg.Result()
+        result.success = True
+        return result
 
     def yolo_callback(self, msg):
         # 정렬이 이미 완전히 끝난 상태라면 YOLO 콜백에서 로봇을 제어하지 않음
@@ -92,6 +114,8 @@ class RecycleTrackingNode(Node):
         # 다음 정렬을 위해 플래그 초기화 (무한 반복)
         self.get_logger().info("🔄 다음 정렬을 위해 시스템을 초기화합니다. 다시 물체를 탐지합니다...")
         self.align_completed = False
+
+        self.action_finished = True
 
 
 def main(args=None):

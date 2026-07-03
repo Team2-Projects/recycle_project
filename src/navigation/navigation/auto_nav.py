@@ -23,8 +23,8 @@ class AutoNav(Node):
         super().__init__('auto_nav')
         self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._recycle_client = ActionClient(self, RecycleActionMsg, 'recycle_action')
+        self._recycle_tracking_client = ActionClient(self, RecycleActionMsg, 'recycle_tracking_action')
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
-        self.reset_detector_pub = self.create_publisher(Empty, '/reset_object_detector', 10)
 
         self.waypoints          = []
         self.current_idx        = 0
@@ -126,47 +126,30 @@ class AutoNav(Node):
                 # 만약 가고 있던 목표 핸들이 없다면 즉시 리사이클 실행
                 self.launch_recycle_action()
 
-    def setting_recycle(self):
-        # 정지
-        stop_msg = Twist()
-        stop_msg.linear.x = 0.0
-        stop_msg.angular.z = 0.0
-        self.cmd_vel_pub.publish(stop_msg)
-        
-        # 회전
-        x, y, w, h = self.coord
-        IMAGE_WIDTH = 640
-        HFOV = math.radians(62.2)
-        error = x - IMAGE_WIDTH / 2
-        angle = error / IMAGE_WIDTH * HFOV
-        current_yaw = self.get_current_yaw()
-        angle_tolerance = math.radians(4.0)
-        if current_yaw is None:
+    # recycle_tracking
+    def launch_recycle_tracking_action(self):
+        self.get_logger().info('🚀 recycle_tracking_action 호출 (정지+회전+직진)')
+        self._recycle_tracking_client.wait_for_server()
+        future = self._recycle_tracking_client.send_goal_async(goal_msg)
+        future.add_done_callback(self.recycle_tracking_goal_response_callback)
+
+    def recycle_tracking_goal_response_callback(self, future):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
             return
-        target_yaw = normalize_angle(current_yaw + angle)
-        while True:
-            current_yaw = self.get_current_yaw()
-            if current_yaw is not None:
-                diff = abs(normalize_angle(target_yaw - current_yaw))
-                if abs(diff) <= angle_tolerance:
-                    break
-                self.cmd_vel_pub.publish(msg)
 
-        # 회전 끝 정지
-        msg.angular.z = 0.0
-        self.cmd_vel_pub.publish(msg)
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self.recycle_tracking_result_callback)
 
-        # 물체까지 직진
-        
+    def recycle_tracking_result_callback(self, future):
+        result = future.result().result
+
+        if not result.success:
+            return
+
         self.launch_recycle_action()
 
-    def get_current_yaw(self):
-        try:
-            t = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
-            return get_yaw_from_quaternion(t.transform.rotation)
-        except TransformException:
-            return None
-
+    # recycle
     def launch_recycle_action(self):
         goal_msg = RecycleActionMsg.Goal()
         goal_msg.index = self.objcet_id if self.objcet_id is not None else 1
@@ -200,9 +183,6 @@ class AutoNav(Node):
 
         self.object_found = False
         
-        self.reset_detector_pub.publish(Empty())
-        self.get_logger().info('📡 Published /reset_object_detector')
-
         self.is_resuming = True
         self.get_logger().info(f'↩️ 원래 목표로 복귀 시작: ({self.resume_x:.2f}, {self.resume_y:.2f})')
         self.send_goal(self.resume_x, self.resume_y)
