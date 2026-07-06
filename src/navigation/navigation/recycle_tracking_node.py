@@ -154,6 +154,35 @@ class RecycleTrackingNode(Node):
 
         return True
 
+        # 실시간 데이터를 사용하므로 conf를 0.2-3정도의 낮은 값으로 맞추세요.
+    # def align_robot(self, target_w): # target_w는 초기값일 뿐, 루프에선 쓰지 마세요
+    #     self.get_logger().info("물체 정렬 루프 시작...")
+        
+    #     while rclpy.ok():
+    #         # 1. 실시간으로 최신 데이터 가져오기 (매우 중요!)
+    #         if self.latest_object is None:
+    #             time.sleep(0.05)
+    #             continue
+                
+    #         # 2. 실시간 중심점 계산
+    #         current_x = self.latest_object.coord[0]
+    #         diff = 320 - current_x # 화면 중앙(320)과 현재 물체 위치의 차이
+            
+    #         # 3. 정렬 조건 (오차 10픽셀 이내)
+    #         if abs(diff) < 10:
+    #             self.get_logger().info(f"정렬 성공! 오차 픽셀: {diff:.2f}")
+    #             break
+
+    #         # 4. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
+    #         msg = Twist()
+    #         msg.angular.z = (1 if diff > 0 else -1) * 0.1 
+    #         self.cmd_vel_pub.publish(msg)
+            
+    #         time.sleep(0.05) # 너무 자주 보내지 않게 잠시 대기
+
+    #     self.cmd_vel_pub.publish(Twist()) # 정렬 완료 시 정지
+    #     return True
+
     def approach_robot(self, goal_handle):
         velocity = 0.10
         probe_duration = 0.5
@@ -175,7 +204,7 @@ class RecycleTrackingNode(Node):
 
             time.sleep(probe_duration)
 
-            self.cmd_vel_pub.publish(Twist())
+            # self.cmd_vel_pub.publish(Twist())
 
             total_move_time += probe_duration
 
@@ -190,7 +219,8 @@ class RecycleTrackingNode(Node):
                 f"접근 중: h={h_current:.2f} diff={diff:.2f}"
             )
 
-            if diff >= 1.0:
+# 실제 코드 구현시 데이터 통신 및 잡음 문제로 인해, 이상적인 값이 안나올 수 있으니 일정 비율만큼만 고려한다.
+            if diff >= 0.8*(velocity*total_move_time):
                 break
 
             if total_move_time >= 3.0:
@@ -205,7 +235,8 @@ class RecycleTrackingNode(Node):
 
         d = velocity * total_move_time
 
-        Z = d * (h_current / diff) - d
+        Z = d * (h_current / diff) 
+        Z = Z - d
 
         self.get_logger().info(
             f"계산 거리 = {Z:.3f}"
