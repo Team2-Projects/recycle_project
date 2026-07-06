@@ -87,6 +87,16 @@ class CoveragePlanner(Node):
 
         except TransformException:
             self.get_logger().info('Waiting for map->base_link transform...')
+            return
+
+        # i don't robot, set 0,0
+        
+        # self.home_x = 0.0
+        # self.home_y = 0.0
+        
+        # self.get_logger().info(f'Home fixed at: ({self.home_x:.2f}, {self.home_y:.2f})')
+        # self.timer.cancel()
+        # self.publish_path()
 
     # ── 안전거리 적용된 후보 셀 반환 ─────────────────
     def get_safe_cells(self):
@@ -222,35 +232,25 @@ class CoveragePlanner(Node):
         )
 
 
+# coverage_node.py 의 main 함수
 def main(args=None):
     rclpy.init(args=args)
     node = CoveragePlanner()
 
-    # 1. 경로가 발행될 때까지는 이전처럼 spin_once로 체크하며 돕니다.
-    while rclpy.ok():
+    # 경로 발행까지 spin_once 사용
+    while rclpy.ok() and not node.path_published:
         rclpy.spin_once(node, timeout_sec=0.1)
-        if node.path_published:
-            break
 
-    node.get_logger().info('waiting short delay for network buffer transmission...')
-    time.sleep(1.5)
-
-    # -------------------------------------------------------------
-    # ❌ [기존 코드] 바로 종료해버리던 부분
-    # node.destroy_node()
-    # rclpy.shutdown()
-    # -------------------------------------------------------------
-
-    # ⭕ [수정 코드] 경로 발행 후 노드를 파괴하지 않고, 사용자가 끄기 전까지 계속 살려둡니다.
-    node.get_logger().info('📡 경로 발행 완료! 오토네브가 데이터를 주워갈 수 있도록 노드를 유지합니다. (Ctrl+C로 종료)')
+    node.get_logger().info('📡 경로 발행 완료! 노드를 유지합니다.')
+    
+    # 여기서 바로 종료하지 말고 spin으로 노드를 계속 살려둡니다.
     try:
-        rclpy.spin(node)  # 이제 여기서 대기하므로 뒤늦게 켜진 오토네브가 경로를 완벽히 가져갑니다.
+        rclpy.spin(node) 
     except KeyboardInterrupt:
-        node.get_logger().info('🛑 사용자에 의해 코버리지 노드가 종료되었습니다.')
+        pass
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

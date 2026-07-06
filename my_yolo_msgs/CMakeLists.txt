@@ -14,6 +14,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED) # 필요한 경우 다른 패키지 추가
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DetectedObject.msg"
+  "srv/SetTracking.srv"
   DEPENDENCIES std_msgs
 )
 # uncomment the following section in order to fill in

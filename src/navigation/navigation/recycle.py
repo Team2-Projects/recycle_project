@@ -90,61 +90,82 @@ class Recycle(Node):
             self.stop_robot()
 
     async def execute_callback(self, goal_handle):
-        request = goal_handle.request
-        self.index = request.index
-        self.home_x = request.home_x
-        self.home_y = request.home_y
-        self.center_x = request.center_x
-        self.center_y = request.center_y
+        try:
+            request = goal_handle.request
+            self.index = request.index
+            self.current_idx = request.current_idx
+            self.home_x = request.home_x
+            self.home_y = request.home_y
+            self.center_x = request.center_x
+            self.center_y = request.center_y
 
-        self.recycle_point0_x = self.home_x - 0.6
-        self.recycle_point0_y = self.home_y + 0.2
-        self.recycle_point1_x = self.home_x - 0.6
-        self.recycle_point1_y = self.home_y
-        self.recycle_point2_x = self.home_x - 0.6
-        self.recycle_point2_y = self.home_y - 0.2
+            self.recycle_point0_x = self.home_x - 0.6
+            self.recycle_point0_y = self.home_y + 0.2
+            self.recycle_point1_x = self.home_x - 0.6
+            self.recycle_point1_y = self.home_y
+            self.recycle_point2_x = self.home_x - 0.6
+            self.recycle_point2_y = self.home_y - 0.2
 
-        self.get_logger().info(
-            f"Recycle Start: HOME으로 이동 ({self.home_x:.2f}, {self.home_y:.2f})"
-        )
+            if self.index == 0:
+                target_x = self.recycle_point0_x
+                target_y = self.recycle_point0_y
+            elif self.index == 1:
+                target_x = self.recycle_point1_x
+                target_y = self.recycle_point1_y
+            elif self.index == 2:
+                target_x = self.recycle_point2_x
+                target_y = self.recycle_point2_y
+            else:
+                target_x = self.home_x
+                target_y = self.home_y
 
-        result = RecycleActionMsg.Result()
+            self.get_logger().info(
+                f"Recycle Start: HOME으로 이동 ({self.home_x:.2f}, {self.home_y:.2f})"
+            )
 
-        if await self.go_home():
-            await self.move_backward()
-            await self.rotate_100()
-            result.success = True
-            result.message = "done"
-            goal_handle.succeed()
-        else:
-            self.get_logger().warn('HOME 이동 실패, 후진/회전 스킵')
+            result = RecycleActionMsg.Result()
+
+            if self.current_idx == 3:
+                center_success = await self.go_to_pose(self.center_x, self.center_y)
+
+                if not center_success:
+                    result.success = False
+                    goal_handle.abort()
+                    return result
+
+            target_success = await self.go_to_pose(target_x, target_y)
+
+            if target_success:
+                await self.move_backward()
+                await self.rotate_by(100)
+                result.success = True
+                result.message = "done"
+                goal_handle.succeed()
+            else:
+                self.get_logger().warn('HOME 이동 실패, 후진/회전 스킵')
+                result.success = False
+                result.message = "home navigation failed"
+                goal_handle.abort()
+
+            return result
+        except Exception as e:
+            import traceback
+            self.get_logger().error(traceback.format_exc())
+
+            result = RecycleActionMsg.Result()
             result.success = False
-            result.message = "home navigation failed"
+            result.message = str(e)
             goal_handle.abort()
+            return result
 
-        return result
-
-    async def go_home(self) -> bool:
+    async def go_to_pose(self, x: float, y: float) -> bool:
         try:
             pose = PoseStamped()
             pose.header.frame_id = 'map'
             pose.header.stamp = self.get_clock().now().to_msg()
-            if self.index == 0:
-                pose.pose.position.x = self.recycle_point0_x
-                pose.pose.position.y = self.recycle_point0_y
-            elif self.index == 1:
-                pose.pose.position.x = self.recycle_point1_x
-                pose.pose.position.y = self.recycle_point1_y
-            elif self.index == 2:
-                self.get_logger().info("asdf")
-                pose.pose.position.x = self.recycle_point2_x
-                pose.pose.position.y = self.recycle_point2_y
-            else:
-                pose.pose.position.x = self.home_x
-                pose.pose.position.y = self.home_y
-
+            pose.pose.position.x = x
+            pose.pose.position.y = y
             pose.pose.orientation.w = 1.0
-
             goal_msg = NavigateToPose.Goal()
             goal_msg.pose = pose
 
@@ -165,7 +186,6 @@ class Recycle(Node):
             result = await goal_handle.get_result_async()
             self.get_logger().info(f'3️⃣ result = {result}')
 
-            self.get_logger().info('✅ HOME 도착')
             return True
 
         except Exception as e:

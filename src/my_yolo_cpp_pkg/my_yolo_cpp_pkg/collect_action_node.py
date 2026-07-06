@@ -12,7 +12,7 @@ import numpy as np
 class YoloNode(Node):
     def __init__(self):
         super().__init__('yolo_node')
-        self.declare_parameter('save_dir', '/home/hee/yolo_second_dataset')
+        self.declare_parameter('save_dir', '/home/user/yolo_second_dataset')
         # 1. 카메라 토픽 구독 (이게 있어야 데이터가 들어옵니다!)
         self.subscription = self.create_subscription(
             CompressedImage, 
