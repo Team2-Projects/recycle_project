@@ -14,6 +14,8 @@ import math
 
 from my_yolo_cpp_pkg import detected_object_id
 from .nav_utils import normalize_angle, get_yaw_from_quaternion
+from rcl_interfaces.srv import SetParameters
+from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
 
 ACTION_RECYCLE_NODE = 'action_recycle_node'
 
@@ -21,6 +23,8 @@ class AutoNav(Node):
 
     def __init__(self):
         super().__init__('auto_nav')
+        
+        # self.set_nav2_angular_limit(0.1)
         self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._recycle_client = ActionClient(self, RecycleActionMsg, 'recycle_action')
         self._recycle_tracking_client = ActionClient(self, RecycleActionMsg, 'recycle_tracking_action')
@@ -62,6 +66,22 @@ class AutoNav(Node):
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
+
+    # def set_nav2_angular_limit(self, max_vel_theta=0.1):
+        
+    #     client = self.create_client(SetParameters, '/controller_server/set_parameters')
+    #     if not client.wait_for_service(timeout_sec=1.0):
+    #         self.get_logger().warn('controller_server 서비스를 찾을 수 없습니다.')
+    #         return
+
+    #     request = SetParameters.Request()
+    #     param = Parameter(
+    #         name='FollowPath.max_vel_theta', # 사용 중인 컨트롤러에 따라 이름이 다를 수 있음
+    #         value=ParameterValue(type=ParameterType.PARAMETER_DOUBLE, double_value=max_vel_theta)
+    #     )
+    #     request.parameters = [param]
+    #     client.call_async(request)
+    #     self.get_logger().info(f'🔄 최대 회전 속도를 {max_vel_theta}로 제한했습니다.')
 
     def get_current_yaw(self):
         try:
