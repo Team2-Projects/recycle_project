@@ -5,7 +5,7 @@ float64 home_x
 float64 home_y
 float64 center_x
 float64 center_y
-float64 target_w
+float64 target_x
 float64 target_h
 ---
 # Result

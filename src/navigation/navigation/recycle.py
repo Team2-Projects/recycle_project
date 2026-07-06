@@ -137,7 +137,7 @@ class Recycle(Node):
 
             if target_success:
                 await self.move_backward()
-                await self.rotate_by(100)
+                await self.rotate_100()
                 result.success = True
                 result.message = "done"
                 goal_handle.succeed()
