@@ -123,6 +123,10 @@ class RecycleTrackingNode(Node):
     def align_robot(self, target_x):
         self.get_logger().info("물체 정렬 루프 시작...")
         
+        self.get_logger().info(f"target_x: {target_x:.2f}")
+        diff = 320 - target_x
+        diff_angle = abs(diff/10.2)
+
         while rclpy.ok():
             if self.latest_object is None:
                 self.get_logger().info("YOLO 토픽 데이터 대기 중...", throttle_duration_sec=2.0)
@@ -132,10 +136,7 @@ class RecycleTrackingNode(Node):
             # if self.latest_object.id == -1:
             #     self.get_logger().info("정렬 중: 감지된 물체가 없음 (id == -1)", throttle_duration_sec=2.0)
             #     time.sleep(0.05)
-            #     continue
-            self.get_logger().info(f"target_x: {target_x:.2f}")
-            diff = 320 - target_x
-            diff_angle = abs(diff/10.2)
+            #     continue    
             self.get_logger().info(f"diff: {diff:.2f}")
             self.get_logger().info(f"diff_angle: {diff_angle:.2f}")
             if abs(diff_angle) < 1:
@@ -147,7 +148,6 @@ class RecycleTrackingNode(Node):
             
             self.cmd_vel_pub.publish(msg)
 
-             
             time.sleep(0.2)
             diff_angle -= abs(msg.angular.z * 0.2)
         self.cmd_vel_pub.publish(Twist())
