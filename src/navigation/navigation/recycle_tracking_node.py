@@ -92,7 +92,7 @@ class RecycleTrackingNode(Node):
             return result
 
         self.get_logger().info("정렬(Align) 단계 진입")
-        if not self.align_robot(goal_handle.request.target_w):
+        if not self.align_robot(goal_handle.request.target_x):
             self.call_tracking_srv(False)
             goal_handle.abort()
             result = RecycleActionMsg.Result()

@@ -30,7 +30,7 @@ class YoloNode(Node):
     def listener_callback(self, msg):
         self.frame_count += 1
 
-        if self.frame_count % 5 != 0:
+        if self.frame_count % 1 != 0:
             return
 
         else:
@@ -42,12 +42,12 @@ class YoloNode(Node):
             # 1. CvBridge를 사용하여 ROS 이미지를 OpenCV(BGR)로 변환
             # frame_bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
-            frame_bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            frame_bgr = cv2.convertScaleAbs(frame_bgr, alpha=1.5, beta=30)
-            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            # frame_bgr = cv2.convertScaleAbs(frame_bgr, alpha=1.5, beta=30)
+            # frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
             # print(f"이미지 형태 (Shape): {frame_bgr.shape}")
             # # 추론
-            results = self.model.predict(source=frame_bgr, imgsz=640, conf=conf_threshold, verbose=False)
+            results = self.model.predict(source=frame, imgsz=640, conf=conf_threshold, verbose=False)
             
             res = results[0]
         
@@ -73,9 +73,9 @@ class YoloNode(Node):
                 org_x = pt1_x - 5
                 org_y = pt1_y - 5
                   
-                cv2.rectangle(frame_bgr, (pt1_x, pt1_y), (pt2_x, pt2_y), (0, 40, 200), 3)
-                cv2.putText(frame_bgr, best_name, (org_x, org_y), cv2.FONT_HERSHEY_SIMPLEX, fontScale = 2, thickness = 3, color = (255, 0, 0))
-                cv2.imshow("YOLO Python Node", frame_bgr)
+                cv2.rectangle(frame, (pt1_x, pt1_y), (pt2_x, pt2_y), (0, 40, 200), 3)
+                cv2.putText(frame, best_name, (org_x, org_y), cv2.FONT_HERSHEY_SIMPLEX, fontScale = 2, thickness = 3, color = (255, 0, 0))
+                cv2.imshow("YOLO Python Node", frame)
                 # cv2.imshow("img", frame)
                 cv2.waitKey(10)
 
@@ -86,7 +86,7 @@ class YoloNode(Node):
                 best_idx = None
                 coord = None
 
-                cv2.imshow("YOLO Python Node", frame_bgr)
+                cv2.imshow("YOLO Python Node", frame)
                 cv2.waitKey(10)
               # res_plotted_rgb = res.plot()
               # res_plotted_bgr = cv2.cvtColor(res_plotted_rgb, cv2.COLOR_RGB2BGR)
