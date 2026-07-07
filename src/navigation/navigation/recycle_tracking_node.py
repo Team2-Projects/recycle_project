@@ -120,7 +120,46 @@ class RecycleTrackingNode(Node):
         result.message = '정렬 및 접근 완료'
         return result
 
+<<<<<<< HEAD
     # def align_robot(self, target_x):
+=======
+    def align_robot(self, target_x):
+        self.get_logger().info("물체 정렬 루프 시작...")
+        
+        self.get_logger().info(f"target_x: {target_x:.2f}")
+        diff = 320 - target_x
+        diff_angle = abs(diff/10.2)
+
+        while rclpy.ok():
+            if self.latest_object is None:
+                self.get_logger().info("YOLO 토픽 데이터 대기 중...", throttle_duration_sec=2.0)
+                time.sleep(0.05)
+                continue
+
+            # if self.latest_object.id == -1:
+            #     self.get_logger().info("정렬 중: 감지된 물체가 없음 (id == -1)", throttle_duration_sec=2.0)
+            #     time.sleep(0.05)
+            #     continue    
+            self.get_logger().info(f"diff: {diff:.2f}")
+            self.get_logger().info(f"diff_angle: {diff_angle:.2f}")
+            if abs(diff_angle) < 1:
+                self.get_logger().info(f"정렬 성공! 오차 angle: {diff_angle:.2f}")
+                break
+
+            msg = Twist()
+            msg.angular.z = (1 if diff > 0 else -1) * 0.2
+            
+            self.cmd_vel_pub.publish(msg)
+
+            time.sleep(0.2)
+            diff_angle -= abs(msg.angular.z * 0.2)
+        self.cmd_vel_pub.publish(Twist())
+
+        return True
+
+        # 실시간 데이터를 사용하므로 conf를 0.2-3정도의 낮은 값으로 맞추세요.
+    # def align_robot(self, target_w): # target_w는 초기값일 뿐, 루프에선 쓰지 마세요
+>>>>>>> 44798d1f0b4916655bf6ae96b2d07f5c4a3512f3
     #     self.get_logger().info("물체 정렬 루프 시작...")
         
     #     while rclpy.ok():
