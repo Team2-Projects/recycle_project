@@ -17,7 +17,7 @@ class YoloNode(Node):
         self.frame_count = 0
 
         self.is_tracking = False # 추적 모드 플래그
-        self.declare_parameter('conf_threshold', 0.5)
+        self.declare_parameter('conf_threshold', 0.4)
         self.model = YOLO('/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo_8n_trained_1_openvino_model')
         
         # 1. 구독자 및 퍼블리셔

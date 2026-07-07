@@ -16,7 +16,7 @@ class YoloNode(Node):
         super().__init__('yolo_node')
         self.frame_count = 0
         self.bridge = CvBridge() # ★ bridge 초기화도 잊지 마세요 ★
-        self.declare_parameter('conf', 0.5)
+        self.declare_parameter('conf', 0.4)
         # 모델 경로를 확인하세요
         self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo_8n_trained_1_openvino_model')
         self.subscription = self.create_subscription(

@@ -195,7 +195,12 @@ class RecycleTrackingNode(Node):
 
         while rclpy.ok():
             if self.latest_object is None:
+                slow_motion = 0.01
+                msg = Twist()
+                msg.linear.x = velocity
+                self.cmd_vel_pub.publish(msg)
                 time.sleep(0.05)
+                self.cmd_vel_pub.publish(Twist())
                 continue
             
         
