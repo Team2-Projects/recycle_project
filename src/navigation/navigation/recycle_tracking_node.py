@@ -178,7 +178,7 @@ class RecycleTrackingNode(Node):
             time.sleep(0.05) # 너무 자주 보내지 않게 잠시 대기
 
                 # 4. 정렬 조건 (오차 10픽셀 이내)
-            if abs(diff) < 10:
+            if abs(diff) < 30:
                 self.get_logger().info(f"정렬 성공! 오차 픽셀: {diff:.2f}")
                 break
 
@@ -188,18 +188,18 @@ class RecycleTrackingNode(Node):
 
     def approach_robot(self, goal_handle):
         velocity = 0.10
-        probe_duration = 0.5
+        probe_duration = 1.0
         # while self.latest_object is None:
         #     self.get_logger().info("접근 전 YOLO 데이터 대기 중...", throttle_duration_sec=2.0)
         #     time.sleep(0.05)
 
         while rclpy.ok():
             if self.latest_object is None:
-                slow_motion = 0.01
+                slow_motion = 0.05
                 msg = Twist()
                 msg.linear.x = velocity
                 self.cmd_vel_pub.publish(msg)
-                time.sleep(0.05)
+                time.sleep(0.2)
                 self.cmd_vel_pub.publish(Twist())
                 continue
             
@@ -209,12 +209,11 @@ class RecycleTrackingNode(Node):
             msg = Twist()
             msg.linear.x = velocity
             self.cmd_vel_pub.publish(msg)
-            self.cmd_vel_pub.publish(Twist())
 
             time.sleep(probe_duration)
 
             later_h = self.latest_object.coord[3]
-
+            self.get_logger().info("height = {}".format(later_h))
             if later_h >= 300:
                 break
 

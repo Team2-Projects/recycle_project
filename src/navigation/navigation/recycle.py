@@ -127,7 +127,7 @@ class Recycle(Node):
 
             result = RecycleActionMsg.Result()
 
-            if self.current_idx == 3:
+            if self.current_idx in (3, 4):
                 center_success = await self.go_to_pose(self.center_x, self.center_y)
 
                 if not center_success:
