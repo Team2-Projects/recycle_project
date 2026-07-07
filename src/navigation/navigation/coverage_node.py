@@ -89,15 +89,6 @@ class CoveragePlanner(Node):
             self.get_logger().info('Waiting for map->base_link transform...')
             return
 
-        # i don't robot, set 0,0
-        
-        # self.home_x = 0.0
-        # self.home_y = 0.0
-        
-        # self.get_logger().info(f'Home fixed at: ({self.home_x:.2f}, {self.home_y:.2f})')
-        # self.timer.cancel()
-        # self.publish_path()
-
     # ── 안전거리 적용된 후보 셀 반환 ─────────────────
     def get_safe_cells(self):
         resolution = self.map_info.resolution
@@ -227,6 +218,11 @@ class CoveragePlanner(Node):
 
         self.path_pub.publish(path)
         self.path_published = True
+
+        if self.map_sub is not None:
+            self.destroy_subscription(self.map_sub)
+            self.map_sub = None
+            
         self.get_logger().info(
             f'Path published: {len(waypoints)} waypoints'
         )

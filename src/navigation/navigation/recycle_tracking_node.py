@@ -309,7 +309,7 @@ def main(args=None):
 
     node = RecycleTrackingNode()
 
-    executor = MultiThreadedExecutor()
+    executor = MultiThreadedExecutor(num_threads=3)
 
     executor.add_node(node)
 
