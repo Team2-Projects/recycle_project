@@ -16,6 +16,8 @@ from navigation_interface.action import RecycleActionMsg
 
 from .nav_utils import normalize_angle, get_yaw_from_quaternion
 
+from action_msgs.msg import GoalStatus
+
 
 class Recycle(Node):
     def __init__(self):
@@ -125,7 +127,7 @@ class Recycle(Node):
 
             result = RecycleActionMsg.Result()
 
-            if self.current_idx == 3:
+            if self.current_idx in (3, 4):
                 center_success = await self.go_to_pose(self.center_x, self.center_y)
 
                 if not center_success:
@@ -170,10 +172,8 @@ class Recycle(Node):
             goal_msg.pose = pose
 
             self._action_client.wait_for_server()
-            self.get_logger().info('1️⃣ wait_for_server 통과')
 
             goal_handle = await self._action_client.send_goal_async(goal_msg)
-            self.get_logger().info(f'2️⃣ goal_handle = {goal_handle}')
 
             if goal_handle is None:
                 self.get_logger().error('❌ goal_handle이 None입니다')
@@ -184,8 +184,11 @@ class Recycle(Node):
                 return False
 
             result = await goal_handle.get_result_async()
-            self.get_logger().info(f'3️⃣ result = {result}')
 
+            status = result.status
+            if status != GoalStatus.STATUS_SUCCEEDED:
+                self.get_logger().warn(f'HOME 이동 실패 (status={status})')
+                return False
             return True
 
         except Exception as e:
@@ -240,7 +243,7 @@ class Recycle(Node):
             if elapsed >= max_duration:
                 self.get_logger().warn('회전 타임아웃, 강제 종료')
 
-            self.get_logger().info('180도 회전 완료 (목표 오차 이내)')
+            self.get_logger().info('100도 회전 완료 (목표 오차 이내)')
         finally:
             self.stop_robot()
 
@@ -264,7 +267,7 @@ def main(args=None):
     rclpy.init(args=args)
     node = Recycle()
 
-    executor = MultiThreadedExecutor()
+    executor = rclpy.executors.SingleThreadedExecutor()
     executor.add_node(node)
     try:
         executor.spin()

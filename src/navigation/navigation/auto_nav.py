@@ -121,7 +121,6 @@ class AutoNav(Node):
             
             # 현재 가던 자율주행 목표 취소
             if self.current_handle is not None:
-                self.get_logger().info('Nav2 목표 취소 요청 중...')
                 self.current_handle.cancel_goal_async()
 
     # recycle_tracking
@@ -262,7 +261,6 @@ class AutoNav(Node):
 
     def feedback_callback(self, feedback_msg):
         dist = feedback_msg.feedback.distance_remaining
-        self.get_logger().info(f'  Distance remaining: {dist:.2f}m', throttle_duration_sec=3.0)
 
 
 def main(args=None):

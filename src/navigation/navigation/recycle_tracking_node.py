@@ -178,7 +178,7 @@ class RecycleTrackingNode(Node):
             time.sleep(0.05) # 너무 자주 보내지 않게 잠시 대기
 
                 # 4. 정렬 조건 (오차 10픽셀 이내)
-            if abs(diff) < 10:
+            if abs(diff) < 30:
                 self.get_logger().info(f"정렬 성공! 오차 픽셀: {diff:.2f}")
                 break
 
@@ -186,121 +186,127 @@ class RecycleTrackingNode(Node):
         self.cmd_vel_pub.publish(Twist()) # 정렬 완료 시 정지
         return True
 
+    # def approach_robot(self, goal_handle):
+    #     velocity = 0.10
+    #     probe_duration = 1.0
+    #     # while self.latest_object is None:
+    #     #     self.get_logger().info("접근 전 YOLO 데이터 대기 중...", throttle_duration_sec=2.0)
+    #     #     time.sleep(0.05)
+
+    #     while rclpy.ok():
+    #         if self.latest_object is None:
+    #             slow_motion = 0.05
+    #             msg = Twist()
+    #             msg.linear.x = velocity
+    #             self.cmd_vel_pub.publish(msg)
+    #             time.sleep(0.2)
+    #             self.cmd_vel_pub.publish(Twist())
+    #             continue
+            
+        
+    #         current_h = self.latest_object.coord[3]
+
+    #         msg = Twist()
+    #         msg.linear.x = velocity
+    #         self.cmd_vel_pub.publish(msg)
+
+    #         time.sleep(probe_duration)
+
+    #         later_h = self.latest_object.coord[3]
+    #         self.get_logger().info("height = {}".format(later_h))
+    #         if later_h >= 300:
+    #             break
+
+    #     self.cmd_vel_pub.publish(Twist())
+
+    #     self.get_logger().info("접근 완료")
+
+    #     return True
+    #         # h_current = self.latest_object.coord[3]
+
     def approach_robot(self, goal_handle):
         velocity = 0.10
         probe_duration = 0.5
-        # while self.latest_object is None:
-        #     self.get_logger().info("접근 전 YOLO 데이터 대기 중...", throttle_duration_sec=2.0)
-        #     time.sleep(0.05)
+
+        while self.latest_object is None:
+            self.get_logger().info("접근 전 YOLO 데이터 대기 중...", throttle_duration_sec=2.0)
+            slow_motion = 0.05
+            msg = Twist()
+            msg.linear.x = velocity
+            self.cmd_vel_pub.publish(msg)
+            time.sleep(0.2)
+            self.cmd_vel_pub.publish(Twist())
+            
+            
+
+        h1 = self.latest_object.coord[3]
+
+        total_move_time = 0.0
+        self.get_logger().info(f"접근 루프 시작 (초기 h1: {h1:.2f})")
 
         while rclpy.ok():
-            if self.latest_object is None:
-                slow_motion = 0.01
-                msg = Twist()
-                msg.linear.x = velocity
-                self.cmd_vel_pub.publish(msg)
-                time.sleep(0.05)
-                self.cmd_vel_pub.publish(Twist())
-                continue
-            
-        
-            current_h = self.latest_object.coord[3]
 
             msg = Twist()
             msg.linear.x = velocity
             self.cmd_vel_pub.publish(msg)
-            self.cmd_vel_pub.publish(Twist())
 
             time.sleep(probe_duration)
 
-            later_h = self.latest_object.coord[3]
+            # self.cmd_vel_pub.publish(Twist())
 
-            if later_h >= 300:
+            total_move_time += probe_duration
+
+            if self.latest_object is None:
+                continue
+
+            h_current = self.latest_object.coord[3]
+
+            diff = h_current - h1
+
+            self.get_logger().info(
+                f"접근 중: h={h_current:.2f} diff={diff:.2f}"
+            )
+
+# 실제 코드 구현시 데이터 통신 및 잡음 문제로 인해, 이상적인 값이 안나올 수 있으니 일정 비율만큼만 고려한다.
+            if diff >= 20:
                 break
+
+            if total_move_time >= 3.0:
+
+                self.get_logger().error(
+                    "3초 동안 높이 변화 없음"
+                )
+
+                self.cmd_vel_pub.publish(Twist())
+
+                return False
+
+        d = velocity * total_move_time
+
+        Z = d * (h_current / diff) 
+        Z = Z - d
+
+        self.get_logger().info(
+            f"계산 거리 = {Z:.3f}"
+        )
+
+        remaining = max(0.0, Z - 0.05)
+
+        move_time = remaining / velocity
+        self.get_logger().info(f"남은 거리 {remaining:.3f}m 만큼 {move_time:.2f}초간 최종 전진합니다.")
+
+        msg = Twist()
+        msg.linear.x = velocity
+
+        self.cmd_vel_pub.publish(msg)
+
+        time.sleep(move_time)
 
         self.cmd_vel_pub.publish(Twist())
 
         self.get_logger().info("접근 완료")
 
         return True
-            # h_current = self.latest_object.coord[3]
-
-#     def approach_robot(self, goal_handle):
-#         velocity = 0.10
-#         probe_duration = 0.5
-
-#         while self.latest_object is None:
-#             self.get_logger().info("접근 전 YOLO 데이터 대기 중...", throttle_duration_sec=2.0)
-#             time.sleep(0.05)
-
-#         h1 = self.latest_object.coord[3]
-
-#         total_move_time = 0.0
-#         self.get_logger().info(f"접근 루프 시작 (초기 h1: {h1:.2f})")
-
-#         while rclpy.ok():
-
-#             msg = Twist()
-#             msg.linear.x = velocity
-#             self.cmd_vel_pub.publish(msg)
-
-#             time.sleep(probe_duration)
-
-#             # self.cmd_vel_pub.publish(Twist())
-
-#             total_move_time += probe_duration
-
-#             if self.latest_object is None:
-#                 continue
-
-#             h_current = self.latest_object.coord[3]
-
-#             diff = h_current - h1
-
-#             self.get_logger().info(
-#                 f"접근 중: h={h_current:.2f} diff={diff:.2f}"
-#             )
-
-# # 실제 코드 구현시 데이터 통신 및 잡음 문제로 인해, 이상적인 값이 안나올 수 있으니 일정 비율만큼만 고려한다.
-#             # if diff >= :
-#             #     break
-
-#             if total_move_time >= 3.0:
-
-#                 self.get_logger().error(
-#                     "3초 동안 거리 변화 없음"
-#                 )
-
-#                 self.cmd_vel_pub.publish(Twist())
-
-#                 return False
-
-#         d = velocity * total_move_time
-
-#         Z = d * (h_current / diff) 
-#         Z = Z - d
-
-#         self.get_logger().info(
-#             f"계산 거리 = {Z:.3f}"
-#         )
-
-#         remaining = max(0.0, Z - 0.05)
-
-#         move_time = remaining / velocity
-#         self.get_logger().info(f"남은 거리 {remaining:.3f}m 만큼 {move_time:.2f}초간 최종 전진합니다.")
-
-#         msg = Twist()
-#         msg.linear.x = velocity
-
-#         self.cmd_vel_pub.publish(msg)
-
-#         time.sleep(move_time)
-
-#         self.cmd_vel_pub.publish(Twist())
-
-#         self.get_logger().info("접근 완료")
-
-#         return True
 
 
 def main(args=None):
@@ -309,7 +315,7 @@ def main(args=None):
 
     node = RecycleTrackingNode()
 
-    executor = MultiThreadedExecutor()
+    executor = MultiThreadedExecutor(num_threads=3)
 
     executor.add_node(node)
 
