@@ -101,11 +101,11 @@ class Recycle(Node):
             self.center_x = request.center_x
             self.center_y = request.center_y
 
-            self.recycle_point0_x = self.home_x - 0.6
+            self.recycle_point0_x = self.home_x - 0.7
             self.recycle_point0_y = self.home_y + 0.2
-            self.recycle_point1_x = self.home_x - 0.6
+            self.recycle_point1_x = self.home_x - 0.7
             self.recycle_point1_y = self.home_y
-            self.recycle_point2_x = self.home_x - 0.6
+            self.recycle_point2_x = self.home_x - 0.7
             self.recycle_point2_y = self.home_y - 0.2
 
             if self.index == 0:

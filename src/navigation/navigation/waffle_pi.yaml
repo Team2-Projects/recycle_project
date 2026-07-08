@@ -129,11 +129,11 @@ controller_server:
       # max_vel_x: 0.15  # 속도
       max_vel_x: 0.1  # 속도
       max_vel_y: 0.0
-      # max_vel_theta: 1.0
-      # max_vel_theta: 1.5
-      # min_vel_theta: 0.4 # 추가
-      max_vel_theta: 0.1
-      min_vel_theta: 0.1
+      max_vel_theta: 1.0 # 원래 값
+      # max_vel_theta: 1.5 # 수정 값
+      min_vel_theta: 0.2 # 추가
+      # max_vel_theta: 0.2
+      # min_vel_theta: 0.2
       theta_samples: 30 # 추가
       min_speed_xy: 0.0
       # max_speed_xy: 0.22

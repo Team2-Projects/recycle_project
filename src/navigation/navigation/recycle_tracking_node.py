@@ -132,12 +132,12 @@ class RecycleTrackingNode(Node):
         while rclpy.ok():
             self.get_logger().info(f"diff: {diff:.2f}")
             self.get_logger().info(f"diff_angle: {diff_angle:.2f}")
-            if abs(diff_angle) < 2:
+            if abs(diff_angle) < 0.3:
                 self.get_logger().info(f"정렬 성공! 오차 angle: {diff_angle:.2f}")
                 break
 
             msg = Twist()
-            msg.angular.z = (1 if diff > 0 else -1) * 0.04
+            msg.angular.z = (1 if diff > 0 else -1) * 0.02
             
             self.cmd_vel_pub.publish(msg)
 
@@ -236,7 +236,7 @@ class RecycleTrackingNode(Node):
             # later_h = self.latest_object.coord[3]
             lower_y = current_y + (current_h/2)
             self.get_logger().info("박스 위 y좌표 = {}".format(lower_y))
-            if lower_y >= 440:
+            if lower_y >= 430:
                 msg = Twist()
                 msg.linear.x = velocity
 
