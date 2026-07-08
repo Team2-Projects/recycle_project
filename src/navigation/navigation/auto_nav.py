@@ -108,6 +108,7 @@ class AutoNav(Node):
             self.object_found = True
 
             self.target_x = float(msg.coord[0])
+            self.target_y = float(msg.coord[1])
             self.target_h = float(msg.coord[3])
             self.objcet_id = msg.id
 
@@ -127,8 +128,9 @@ class AutoNav(Node):
     def launch_recycle_tracking_action(self):
         goal_msg = RecycleActionMsg.Goal()
         goal_msg.target_x = self.target_x
+        goal_msg.target_y = self.target_y
         goal_msg.target_h = self.target_h
-        self.get_logger().info(f'🚀 정렬 시작: X={self.target_x}, H={self.target_h}')
+        self.get_logger().info(f'🚀 정렬 시작: X={self.target_x}, Y={self.target_y}, H={self.target_h}')
         #self.get_logger().info('🚀 recycle_tracking_action 호출 (정지+회전+직진)')
         self._recycle_tracking_client.wait_for_server()
         future = self._recycle_tracking_client.send_goal_async(goal_msg)
