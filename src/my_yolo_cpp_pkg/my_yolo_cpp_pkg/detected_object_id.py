@@ -18,8 +18,9 @@ class YoloNode(Node):
 
         self.is_tracking = False # 추적 모드 플래그
         self.declare_parameter('conf_threshold', 0.4)
-        self.model = YOLO('/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo_8n_trained_1_openvino_model')
-        
+        # self.model = YOLO('/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo_8n_trained_1_openvino_model')
+        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg//models/0707_transfer_openvino_model')
+
         # 1. 구독자 및 퍼블리셔
         self.subscription = self.create_subscription(
             CompressedImage, '/image_raw/compressed', self.listener_callback, 10)

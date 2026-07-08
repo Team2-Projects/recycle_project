@@ -9,14 +9,18 @@ from pathlib import Path
 class Image_SaveNode(Node):
     def __init__(self):
         super().__init__('yolo_node')
-        self.declare_parameter('object', 0.4)
         # 저장 경로 설정
-        self.save_dir = Path("/media/sf_win_folder/{}_img/".format(object))
+        self.declare_parameter('object', 'background')
+        object_name = self.get_parameter('object').get_parameter_value().string_value
+
+        # 2. 그 변수(object_name)를 사용하여 경로를 생성합니다.
+        self.save_dir = Path("/home/hee/saved_images/{}_img_0707/".format(object_name))
+        # self.save_dir = Path("/media/sf_win_folder/{}_img_0707/".format(object))
         self.save_dir.mkdir(parents=True, exist_ok=True)
         
         # [수정] 기존 파일들을 확인하여 마지막 번호 가져오기
         # "cap_0001.jpg", "cap_0002.jpg" 형태라 가정
-        existing_files = list(self.save_dir.glob("{}_*.jpg".format(object)))
+        existing_files = list(self.save_dir.glob("cap*.jpg"))
         self.image_id = len(existing_files)  # 이미 저장된 개수부터 시작
         
         self.save_interval = 2.0  # 2초마다 저장

@@ -18,7 +18,8 @@ class YoloNode(Node):
         self.bridge = CvBridge() # ★ bridge 초기화도 잊지 마세요 ★
         self.declare_parameter('conf', 0.4)
         # 모델 경로를 확인하세요
-        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo_8n_trained_1_openvino_model')
+        # self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo_8n_trained_1_openvino_model')
+        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg//models/0707_transfer_openvino_model')
         self.subscription = self.create_subscription(
             CompressedImage, '/image_raw/compressed', self.listener_callback, 10)
 

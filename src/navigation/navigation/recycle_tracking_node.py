@@ -172,13 +172,14 @@ class RecycleTrackingNode(Node):
             diff = 320 - current_x # 화면 중앙(320)과 현재 물체 위치의 차이
                 # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
             msg = Twist()
-            msg.angular.z = (1 if diff > 0 else -1) * 0.2
+            # 0.2 -> 0.05
+            msg.angular.z = (1 if diff > 0 else -1) * 0.05
             self.cmd_vel_pub.publish(msg)
                 
             time.sleep(0.05) # 너무 자주 보내지 않게 잠시 대기
 
-                # 4. 정렬 조건 (오차 10픽셀 이내)
-            if abs(diff) < 30:
+                # 4. 정렬 조건 (오차 20픽셀 이내)
+            if abs(diff) < 20:
                 self.get_logger().info(f"정렬 성공! 오차 픽셀: {diff:.2f}")
                 break
 
@@ -225,12 +226,15 @@ class RecycleTrackingNode(Node):
     #         # h_current = self.latest_object.coord[3]
 
     def approach_robot(self, goal_handle):
+
         velocity = 0.10
         probe_duration = 0.5
 
         while self.latest_object is None:
             self.get_logger().info("접근 전 YOLO 데이터 대기 중...", throttle_duration_sec=2.0)
-            slow_motion = 0.05
+
+            #slow_motion is 0.05 -> 0.02
+            slow_motion = 0.02
             msg = Twist()
             msg.linear.x = velocity
             self.cmd_vel_pub.publish(msg)
@@ -244,6 +248,7 @@ class RecycleTrackingNode(Node):
         total_move_time = 0.0
         self.get_logger().info(f"접근 루프 시작 (초기 h1: {h1:.2f})")
 
+        # [수정] 시작 시간 기록을 루프 외부로 뺍니다.
         while rclpy.ok():
 
             msg = Twist()
@@ -252,9 +257,10 @@ class RecycleTrackingNode(Node):
 
             time.sleep(probe_duration)
 
-            # self.cmd_vel_pub.publish(Twist())
-
-            total_move_time += probe_duration
+            # [수정] 누적 시간 대신 정확한 경과 시간을 계산
+            now = self.get_clock().now()
+            total_move_time = (now - start_time).nanoseconds * 1e-9
+       
 
             if self.latest_object is None:
                 continue
@@ -264,7 +270,7 @@ class RecycleTrackingNode(Node):
             diff = h_current - h1
 
             self.get_logger().info(
-                f"접근 중: h={h_current:.2f} diff={diff:.2f}"
+                f"접근 중: 현재 높이={h_current:.2f} 높이 차이={diff:.2f}"
             )
 
 # 실제 코드 구현시 데이터 통신 및 잡음 문제로 인해, 이상적인 값이 안나올 수 있으니 일정 비율만큼만 고려한다.
