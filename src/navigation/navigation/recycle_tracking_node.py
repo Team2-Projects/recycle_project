@@ -209,7 +209,7 @@ class RecycleTrackingNode(Node):
         # while self.latest_object is None:
         #     self.get_logger().info("접근 전 YOLO 데이터 대기 중...", throttle_duration_sec=2.0)
         #     time.sleep(0.05)
-        last_approach_time = 2.0
+        last_approach_time = 3.0
         while rclpy.ok():
             if self.latest_object is None:
                 # 감지를 못할때는 정말 천천히 움직이면서 물체를 감지하도록 한다.
@@ -236,7 +236,7 @@ class RecycleTrackingNode(Node):
             # later_h = self.latest_object.coord[3]
             lower_y = current_y + (current_h/2)
             self.get_logger().info("박스 위 y좌표 = {}".format(lower_y))
-            if lower_y >= 475:
+            if lower_y >= 440:
                 msg = Twist()
                 msg.linear.x = velocity
 
