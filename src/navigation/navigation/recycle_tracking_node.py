@@ -227,7 +227,7 @@ class RecycleTrackingNode(Node):
 
     def approach_robot(self, goal_handle):
 
-        velocity = 0.10
+        non_tracking_velocity = 0.05
         probe_duration = 0.5
 
         while self.latest_object is None:
@@ -244,15 +244,16 @@ class RecycleTrackingNode(Node):
             
 
         h1 = self.latest_object.coord[3]
+        
 
         total_move_time = 0.0
         self.get_logger().info(f"접근 루프 시작 (초기 h1: {h1:.2f})")
-
+        start_time = self.get_clock().now()
         # [수정] 시작 시간 기록을 루프 외부로 뺍니다.
         while rclpy.ok():
 
             msg = Twist()
-            msg.linear.x = velocity
+            msg.linear.x = non_tracking_velocity
             self.cmd_vel_pub.publish(msg)
 
             time.sleep(probe_duration)
@@ -274,29 +275,31 @@ class RecycleTrackingNode(Node):
             )
 
 # 실제 코드 구현시 데이터 통신 및 잡음 문제로 인해, 이상적인 값이 안나올 수 있으니 일정 비율만큼만 고려한다.
-            if diff >= 20:
+            if diff >= 0.20*h1:
                 break
 
-            if total_move_time >= 3.0:
+            if total_move_time >= 10.0:
 
                 self.get_logger().error(
-                    "3초 동안 높이 변화 없음"
+                    "{}초 동안 높이 변화 없음".format(total_move_time)
                 )
 
                 self.cmd_vel_pub.publish(Twist())
 
                 return False
+        self.cmd_vel_pub.publish(Twist())
 
-        d = velocity * total_move_time
+        velocity = 0.1
+        d = non_tracking_velocity * total_move_time
 
         Z = d * (h_current / diff) 
-        Z = Z - d
+        Z = Z - (1.7*d)
 
         self.get_logger().info(
             f"계산 거리 = {Z:.3f}"
         )
 
-        remaining = max(0.0, Z - 0.05)
+        remaining = max(0.0, Z - non_tracking_velocity*(total_move_time))
 
         move_time = remaining / velocity
         self.get_logger().info(f"남은 거리 {remaining:.3f}m 만큼 {move_time:.2f}초간 최종 전진합니다.")
