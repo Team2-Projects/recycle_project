@@ -234,7 +234,7 @@ class RecycleTrackingNode(Node):
             current_h = self.latest_object.coord[3]
             current_y = self.latest_object.coord[1]
             # later_h = self.latest_object.coord[3]
-            higher_y = current_y + (current_h/2)
+            lower_y = current_y + (current_h/2)
             self.get_logger().info("박스 위 y좌표 = {}".format(lower_y))
             if lower_y >= 475:
                 msg = Twist()
