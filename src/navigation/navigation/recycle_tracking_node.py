@@ -215,7 +215,7 @@ class RecycleTrackingNode(Node):
                 # 감지를 못할때는 정말 천천히 움직이면서 물체를 감지하도록 한다.
                 slow_motion = 0.02
                 msg = Twist()
-                msg.linear.x = velocity
+                msg.linear.x = slow_motion
                 self.cmd_vel_pub.publish(msg)
                 time.sleep(0.2)
                 self.cmd_vel_pub.publish(Twist())
@@ -223,18 +223,12 @@ class RecycleTrackingNode(Node):
             
             # current_h = self.latest_object.coord[3]
 
-            msg = Twist()
-            msg.linear.x = velocity
-
-            ## 아래 두 줄은 0.10(velocity)m/s로 probe_duration(1초)동안 움직여라.
-            self.cmd_vel_pub.publish(msg)
-            time.sleep(probe_duration)
-
             current_h = self.latest_object.coord[3]
             current_y = self.latest_object.coord[1]
             # later_h = self.latest_object.coord[3]
             lower_y = current_y + (current_h/2)
-            # self.get_logger().info("박스 위 y좌표 = {}".format(lower_y))
+            # self.get_logger().info("박스 위 y좌표 = {}".format(lower_y))            
+
             if lower_y >= 430:
                 msg = Twist()
                 msg.linear.x = velocity
@@ -244,7 +238,15 @@ class RecycleTrackingNode(Node):
                 time.sleep(last_approach_time)
                 break
 
-        self.cmd_vel_pub.publish(Twist())
+            msg = Twist()
+            msg.linear.x = velocity
+
+                ## 아래 두 줄은 0.10(velocity)m/s로 probe_duration(1초)동안 움직여라.
+            self.cmd_vel_pub.publish(msg)
+            time.sleep(probe_duration)
+                
+
+            self.cmd_vel_pub.publish(Twist())
 
         self.get_logger().info("접근 완료")
 
