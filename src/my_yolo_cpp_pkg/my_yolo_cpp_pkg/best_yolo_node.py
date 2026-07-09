@@ -6,7 +6,8 @@ from ultralytics import YOLO
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
-
+from ament_index_python.packages import get_package_share_directory
+import os
 
 clf_idx = {'can': 0, 'paper': 1, 'plastic': 2}
 
@@ -18,8 +19,16 @@ class YoloNode(Node):
         self.bridge = CvBridge() # ★ bridge 초기화도 잊지 마세요 ★
         self.declare_parameter('conf', 0.4)
         # 모델 경로를 확인하세요
-        # self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo_8n_trained_1_openvino_model')
-        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg//models/0707_transfer_openvino_model')
+        # 1. 패키지의 share 경로를 자동으로 찾음
+        # package_share_directory = get_package_share_directory('my_yolo_cpp_pkg')
+
+        # # 2. 모델 경로를 조합
+        # model_path = os.path.join(package_share_directory, 'models', 'transfer_v2_openvino_model')
+
+        # # 3. 모델 로드
+        # self.model = YOLO(model_path)
+        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/transfer_v2_openvino_model')
+
         self.subscription = self.create_subscription(
             CompressedImage, '/image_raw/compressed', self.listener_callback, 10)
 
