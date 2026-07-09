@@ -47,6 +47,9 @@ class AutoNav(Node):
         self.current_handle = None
         self.is_resuming = False  
 
+        self.going_home = False  
+        self.home_arrive_threshold = 0.5
+
         latched_qos = QoSProfile(
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -201,6 +204,7 @@ class AutoNav(Node):
 
         x, y = self.waypoints[self.current_idx]
         total = len(self.waypoints)
+        self.going_home = (self.current_idx == total - 1)
         label = '[HOME]' if self.current_idx == total - 1 else f'[{self.current_idx + 1}/{total}]'
         self.get_logger().info(f'Navigating to {label} ({x:.2f}, {y:.2f})')
         self.send_goal(x, y)
@@ -263,6 +267,10 @@ class AutoNav(Node):
 
     def feedback_callback(self, feedback_msg):
         dist = feedback_msg.feedback.distance_remaining
+        if self.going_home and not self.object_found:
+            if dist <= self.home_arrive_threshold:
+                self.object_found = True
+                self.get_logger().info(f'🏠 HOME 근접 (남은 거리 {dist:.2f}m): 물체 감지 비활성화')
 
 
 def main(args=None):
