@@ -18,7 +18,7 @@ class YoloNode(Node):
 
         self.is_tracking = False # 추적 모드 플래그
         self.declare_parameter('conf_threshold', 0.4)
-        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/transfer_v2_openvino_model')
+        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/transfer_v3_openvino_model')
         # 모델 경로를 확인하세요
         # 1. 패키지의 share 경로를 자동으로 찾음
         # package_share_directory = get_package_share_directory('my_yolo_cpp_pkg')

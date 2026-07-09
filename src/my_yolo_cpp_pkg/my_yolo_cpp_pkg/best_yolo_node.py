@@ -27,7 +27,7 @@ class YoloNode(Node):
 
         # # 3. 모델 로드
         # self.model = YOLO(model_path)
-        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/transfer_v2_openvino_model')
+        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/transfer_v3_openvino_model')
 
         self.subscription = self.create_subscription(
             CompressedImage, '/image_raw/compressed', self.listener_callback, 10)
