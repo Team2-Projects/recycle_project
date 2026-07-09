@@ -59,7 +59,7 @@ class RecycleTrackingNode(Node):
         req = SetTracking.Request()
         req.enable = enable
 
-        self.get_logger().info(f"YOLO 추적 모드 변경 요청 보냄: {enable}")
+        # self.get_logger().info(f"YOLO 추적 모드 변경 요청 보냄: {enable}")
         future = self.tracking_cli.call_async(req)
 
         event = Event()
@@ -77,7 +77,7 @@ class RecycleTrackingNode(Node):
             self.get_logger().error("Tracking Service 호출 실패")
             return False
 
-        self.get_logger().info(f"YOLO 추적 모드 변경 완료 응답 수신: {future.result().success}")
+        # self.get_logger().info(f"YOLO 추적 모드 변경 완료 응답 수신: {future.result().success}")
         return True
 
     def execute_callback(self, goal_handle):
@@ -122,83 +122,83 @@ class RecycleTrackingNode(Node):
 
 
     # # def align_robot(self, target_x):
-    def align_robot(self, target_x):
-        self.get_logger().info("물체 정렬 루프 시작...")
+    # def align_robot(self, target_x):
+    #     # self.get_logger().info("물체 정렬 루프 시작...")
         
-        self.get_logger().info(f"target_x: {target_x:.2f}")
-        diff = 320 - target_x
-        diff_angle = abs(diff/10.3)
+    #     # self.get_logger().info(f"target_x: {target_x:.2f}")
+    #     diff = 320 - target_x
+    #     diff_angle = abs(diff/10.3)
 
-        while rclpy.ok():
-            self.get_logger().info(f"diff: {diff:.2f}")
-            self.get_logger().info(f"diff_angle: {diff_angle:.2f}")
-            if abs(diff_angle) < 0.3:
-                self.get_logger().info(f"정렬 성공! 오차 angle: {diff_angle:.2f}")
-                break
-
-            msg = Twist()
-            msg.angular.z = (1 if diff > 0 else -1) * 0.02
-            
-            self.cmd_vel_pub.publish(msg)
-
-
-            time.sleep(0.2)
-            
-            diff_angle -= abs(msg.angular.z * 0.2) * (180.0 / math.pi)
-        self.cmd_vel_pub.publish(Twist())
-
-        return True
-
-    #     실시간 데이터를 사용하므로 conf를 0.2-3정도의 낮은 값으로 맞추세요.
-    # def align_robot(self, target_x): # target_w는 초기값일 뿐, 루프에선 쓰지 마세요
-    #     self.get_logger().info("물체 정렬 루프 시작...")
-    
-    #     self.get_logger().info(f"target_x: {target_x:.2f}")
     #     while rclpy.ok():
-    #         # 1. 실시간으로 최신 데이터 가져오기 (매우 중요!)
-    #         if self.latest_object is None:
-    #             init_diff = 320 - target_x
-    #             msg = Twist()
-    #             # 0.2 -> 0.05
-    #             msg.angular.z = (1 if diff > 0 else -1) * 0.05
-    #             self.cmd_vel_pub.publish(msg)
-                    
-    #             time.sleep(0.05)
-                
-    #             if abs(init_diff) < 20:
-    #                 self.get_logger().info(f"정렬 성공! 오차 픽셀: {init_diff:.2f}")
-    #                 break
-    #             # self.cmd_vel_pub.publish(Twist())
-    #             # time.sleep(0.05)
-    #             # msg = Twist()
-    #             # msg.angular.z = 0.00
-    #             # msg.linear.x = 0.02
-    #             # self.cmd_vel_pub.publish(msg)
-    #             # time.sleep(0.05)
-    #             # self.cmd_vel_pub.publish(Twist())
-    #             # time.sleep(0.05)
-    #             continue
-            
-    #         # 1. 실시간 중심점 계산
-    #         current_x = self.latest_object.coord[0]
-    #         target_x = current_x
-    #         diff = 320 - current_x # 화면 중앙(320)과 현재 물체 위치의 차이
-    #             # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
-    #         msg = Twist()
-    #         # 0.2 -> 0.05
-    #         msg.angular.z = (1 if diff > 0 else -1) * 0.05
-    #         self.cmd_vel_pub.publish(msg)
-                
-    #         time.sleep(0.05) # 너무 자주 보내지 않게 잠시 대기
-
-    #             # 4. 정렬 조건 (오차 20픽셀 이내)
-    #         if abs(diff) < 20:
-    #             self.get_logger().info(f"정렬 성공! 오차 픽셀: {diff:.2f}")
+    #         # self.get_logger().info(f"diff: {diff:.2f}")
+    #         # self.get_logger().info(f"diff_angle: {diff_angle:.2f}")
+    #         if abs(diff_angle) < 0.3:
+    #             self.get_logger().info(f"정렬 성공! 오차 angle: {diff_angle:.2f}")
     #             break
 
+    #         msg = Twist()
+    #         msg.angular.z = (1 if diff > 0 else -1) * 0.02
+            
+    #         self.cmd_vel_pub.publish(msg)
 
-    #     self.cmd_vel_pub.publish(Twist()) # 정렬 완료 시 정지
+
+    #         time.sleep(0.2)
+            
+    #         diff_angle -= abs(msg.angular.z * 0.2) * (180.0 / math.pi)
+    #     self.cmd_vel_pub.publish(Twist())
+
     #     return True
+
+    #     실시간 데이터를 사용하므로 conf를 0.2-3정도의 낮은 값으로 맞추세요.
+    def align_robot(self, target_x): # target_w는 초기값일 뿐, 루프에선 쓰지 마세요
+        self.get_logger().info("물체 정렬 루프 시작...")
+    
+        self.get_logger().info(f"target_x: {target_x:.2f}")
+        while rclpy.ok():
+            # 1. 실시간으로 최신 데이터 가져오기 (매우 중요!)
+            if self.latest_object is None:
+                init_diff = 320 - target_x
+                msg = Twist()
+                # 0.2 -> 0.05
+                msg.angular.z = (1 if diff > 0 else -1) * 0.05
+                self.cmd_vel_pub.publish(msg)
+                    
+                time.sleep(0.05)
+                
+                if abs(init_diff) < 20:
+                    self.get_logger().info(f"정렬 성공! 오차 픽셀: {init_diff:.2f}")
+                    break
+                # self.cmd_vel_pub.publish(Twist())
+                # time.sleep(0.05)
+                # msg = Twist()
+                # msg.angular.z = 0.00
+                # msg.linear.x = 0.02
+                # self.cmd_vel_pub.publish(msg)
+                # time.sleep(0.05)
+                # self.cmd_vel_pub.publish(Twist())
+                # time.sleep(0.05)
+                continue
+            
+            # 1. 실시간 중심점 계산
+            current_x = self.latest_object.coord[0]
+            target_x = current_x
+            diff = 320 - current_x # 화면 중앙(320)과 현재 물체 위치의 차이
+                # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
+            msg = Twist()
+            # 0.2 -> 0.05
+            msg.angular.z = (1 if diff > 0 else -1) * 0.05
+            self.cmd_vel_pub.publish(msg)
+                
+            time.sleep(0.05) # 너무 자주 보내지 않게 잠시 대기
+
+                # 4. 정렬 조건 (오차 20픽셀 이내)
+            if abs(diff) < 20:
+                self.get_logger().info(f"정렬 성공! 오차 픽셀: {diff:.2f}")
+                break
+
+
+        self.cmd_vel_pub.publish(Twist()) # 정렬 완료 시 정지
+        return True
 
 # 박스가 없어지는 문제. 
     def approach_robot(self, goal_handle):
@@ -215,7 +215,7 @@ class RecycleTrackingNode(Node):
                 # 감지를 못할때는 정말 천천히 움직이면서 물체를 감지하도록 한다.
                 slow_motion = 0.02
                 msg = Twist()
-                msg.linear.x = velocity
+                msg.linear.x = slow_motion
                 self.cmd_vel_pub.publish(msg)
                 time.sleep(0.2)
                 self.cmd_vel_pub.publish(Twist())
@@ -223,19 +223,12 @@ class RecycleTrackingNode(Node):
             
             # current_h = self.latest_object.coord[3]
 
-            msg = Twist()
-            msg.linear.x = velocity
-
-            ## 아래 두 줄은 0.10(velocity)m/s로 probe_duration(1초)동안 움직여라.
-            self.cmd_vel_pub.publish(msg)
-            time.sleep(probe_duration)
-
-
             current_h = self.latest_object.coord[3]
             current_y = self.latest_object.coord[1]
             # later_h = self.latest_object.coord[3]
             lower_y = current_y + (current_h/2)
-            self.get_logger().info("박스 위 y좌표 = {}".format(lower_y))
+            # self.get_logger().info("박스 위 y좌표 = {}".format(lower_y))            
+
             if lower_y >= 430:
                 msg = Twist()
                 msg.linear.x = velocity
@@ -245,7 +238,15 @@ class RecycleTrackingNode(Node):
                 time.sleep(last_approach_time)
                 break
 
-        self.cmd_vel_pub.publish(Twist())
+            msg = Twist()
+            msg.linear.x = velocity
+
+                ## 아래 두 줄은 0.10(velocity)m/s로 probe_duration(1초)동안 움직여라.
+            self.cmd_vel_pub.publish(msg)
+            time.sleep(probe_duration)
+                
+
+            self.cmd_vel_pub.publish(Twist())
 
         self.get_logger().info("접근 완료")
 

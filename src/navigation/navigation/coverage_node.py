@@ -80,7 +80,6 @@ class CoveragePlanner(Node):
             )
             self.home_x = transform.transform.translation.x
             self.home_y = transform.transform.translation.y
-            self.get_logger().info(f'Home saved: ({self.home_x:.2f}, {self.home_y:.2f})')
 
             self.timer.cancel()
             self.publish_path()
@@ -140,14 +139,12 @@ class CoveragePlanner(Node):
     def get_farthest_x_goal(self, safe_xs, safe_ys):
         dx = np.abs(safe_xs - self.home_x)
         gx, gy = self.pick_farthest(safe_xs, safe_ys, dx, fix_axis='y')
-        self.get_logger().info(f'X-farthest: ({gx:.2f}, {gy:.2f})')
         return gx, gy
 
     # ── 세로 최원점 ───────────────────────────────────
     def get_farthest_y_goal(self, safe_xs, safe_ys):
         dy = np.abs(safe_ys - self.home_y)
         gx, gy = self.pick_farthest(safe_xs, safe_ys, dy, fix_axis='x')
-        self.get_logger().info(f'Y-farthest: ({gx:.2f}, {gy:.2f})')
         return gx - 0.5, gy
 
     # ── 대각선 최원점 ─────────────────────────────────
@@ -157,7 +154,6 @@ class CoveragePlanner(Node):
         dist = dx + dy
         idx  = np.argmax(dist)
         gx, gy = float(safe_xs[idx]), float(safe_ys[idx])
-        self.get_logger().info(f'XY-farthest: ({gx:.2f}, {gy:.2f})  dist={dist[idx]:.2f}m')
         return gx + 0.2, gy 
 
     # ── 홈(Home)과 대각선 끝점(XY)의 딱 중간 점 구하기 ──
@@ -197,8 +193,7 @@ class CoveragePlanner(Node):
             goal_center,
             (self.home_x, self.home_y)
         ]
-
-        self.get_logger().info('Waypoints (Updated with Center):')
+        
         labels = ['X-farthest', 'XY-farthest', 'CENTER-goal', 'Y-farthest', 'CENTER-goal', 'HOME']
         for lbl, (wx, wy) in zip(labels, waypoints):
             self.get_logger().info(f'  [{lbl}] ({wx:.2f}, {wy:.2f})')
@@ -237,7 +232,7 @@ def main(args=None):
     while rclpy.ok() and not node.path_published:
         rclpy.spin_once(node, timeout_sec=0.1)
 
-    node.get_logger().info('📡 경로 발행 완료! 노드를 유지합니다.')
+    node.get_logger().info('📡 경로 발행 완료!')
     
     # 여기서 바로 종료하지 말고 spin으로 노드를 계속 살려둡니다.
     try:

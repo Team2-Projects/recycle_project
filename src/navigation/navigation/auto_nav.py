@@ -133,8 +133,7 @@ class AutoNav(Node):
         goal_msg.target_x = self.target_x
         goal_msg.target_y = self.target_y
         goal_msg.target_h = self.target_h
-        self.get_logger().info(f'🚀 정렬 시작: X={self.target_x}, Y={self.target_y}, H={self.target_h}')
-        #self.get_logger().info('🚀 recycle_tracking_action 호출 (정지+회전+직진)')
+        self.get_logger().info('🚀 recycle_tracking_action 호출 (회전 + 접근)')
         self._recycle_tracking_client.wait_for_server()
         future = self._recycle_tracking_client.send_goal_async(goal_msg)
         future.add_done_callback(self.recycle_tracking_goal_response_callback)
@@ -192,7 +191,7 @@ class AutoNav(Node):
         self.object_found = False
         
         self.is_resuming = True
-        self.get_logger().info(f'↩️ 원래 목표로 복귀 시작: ({self.resume_x:.2f}, {self.resume_y:.2f})')
+        self.get_logger().info(f'↩️ 원래 목표로 복귀 시작')
         self.send_goal(self.resume_x, self.resume_y)
 
     def send_next_goal(self):
@@ -270,7 +269,6 @@ class AutoNav(Node):
         if self.going_home and not self.object_found:
             if dist <= self.home_arrive_threshold:
                 self.object_found = True
-                self.get_logger().info(f'🏠 HOME 근접 (남은 거리 {dist:.2f}m): 물체 감지 비활성화')
 
 
 def main(args=None):

@@ -44,7 +44,6 @@ class Recycle(Node):
         self._tick_timer = self.create_timer(self._tick_period, self._on_tick)
 
         self.warmup()
-        self.get_logger().info("Recycle Done")
 
     # 노드 생성 직후 TF 버퍼가 채워질 시간을 준다. __init__ 안이라 아직
     # executor.spin()이 돌기 전이므로 여기서는 blocking spin_once로 충분하다.
@@ -101,12 +100,12 @@ class Recycle(Node):
             self.center_x = request.center_x
             self.center_y = request.center_y
 
-            self.recycle_point0_x = self.home_x - 0.7
-            self.recycle_point0_y = self.home_y + 0.2
-            self.recycle_point1_x = self.home_x - 0.7
+            self.recycle_point0_x = self.home_x - 0.8
+            self.recycle_point0_y = self.home_y + 0.5
+            self.recycle_point1_x = self.home_x - 0.8
             self.recycle_point1_y = self.home_y
-            self.recycle_point2_x = self.home_x - 0.7
-            self.recycle_point2_y = self.home_y - 0.2
+            self.recycle_point2_x = self.home_x - 0.8
+            self.recycle_point2_y = self.home_y - 0.5
 
             if self.index == 0:
                 target_x = self.recycle_point0_x
@@ -139,7 +138,13 @@ class Recycle(Node):
 
             if target_success:
                 await self.move_backward()
-                await self.rotate_100()
+                if self.index == 0:
+                    await self.rotate_by(180)
+                elif self.index == 1:
+                    await self.rotate_by(120)
+                elif self.index == 2:
+                    await self.rotate_by(100)
+                
                 result.success = True
                 result.message = "done"
                 goal_handle.succeed()
@@ -210,13 +215,13 @@ class Recycle(Node):
         msg.angular.z = 0.0
         await self._publish_for_duration(msg, duration)
 
-    async def rotate_100(self):
+    async def rotate_by(self, angle):
         start_yaw = self.get_current_yaw()
         if start_yaw is None:
             self.get_logger().warn('TF 획득 실패, 회전 스킵')
             return
 
-        target_yaw = normalize_angle(start_yaw + math.radians(100))  # 100도 목표
+        target_yaw = normalize_angle(start_yaw + math.radians(angle))  # 100도 목표
 
         msg = Twist()
         msg.linear.x = 0.0
@@ -243,7 +248,7 @@ class Recycle(Node):
             if elapsed >= max_duration:
                 self.get_logger().warn('회전 타임아웃, 강제 종료')
 
-            self.get_logger().info('100도 회전 완료 (목표 오차 이내)')
+            self.get_logger().info('100도 회전 완료')
         finally:
             self.stop_robot()
 
