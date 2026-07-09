@@ -198,10 +198,21 @@ class RecycleTrackingNode(Node):
 
 
         self.cmd_vel_pub.publish(Twist()) # 정렬 완료 시 정지
+
+    
         return True
 
 # 박스가 없어지는 문제. 
     def approach_robot(self, goal_handle):
+        current_x = self.latest_object.coord[0]
+        target_x = current_x
+        diff = 320 - current_x # 화면 중앙(320)과 현재 물체 위치의 차이
+                # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
+
+        if abs(diff) >= 20:
+            self.align_robot(current_x)
+        
+
         # 로봇이 직진하는 속력.
         velocity = 0.10
         # 이 시간동안 움직여라. 

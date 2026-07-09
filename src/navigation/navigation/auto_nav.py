@@ -42,6 +42,8 @@ class AutoNav(Node):
         self.center_x = None
         self.center_y = None
 
+        self.flag = False
+
         self.resume_x = None
         self.resume_y = None
         self.current_handle = None
@@ -192,7 +194,11 @@ class AutoNav(Node):
         
         self.is_resuming = True
         self.get_logger().info(f'↩️ 원래 목표로 복귀 시작')
-        self.send_goal(self.resume_x, self.resume_y)
+        if self.current_idx in (3, 4):
+            self.send_goal(self.center_x, self.center_y)
+            self.flag = True
+        else:
+            self.send_goal(self.resume_x, self.resume_y)
 
     def send_next_goal(self):
         if self.current_idx >= len(self.waypoints):
@@ -234,7 +240,7 @@ class AutoNav(Node):
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().warn('Goal rejected! Skipping.')
-            self.current_idx += 1                
+            self.current_idx += 1
             self.send_next_goal()
             return
 
@@ -261,8 +267,12 @@ class AutoNav(Node):
             x, y = self.waypoints[self.current_idx]
             self.get_logger().info(f'✅ Reached ({x:.2f}, {y:.2f})')
             
-        self.current_idx += 1
-        self.send_next_goal()
+        if self.flag:
+            self.flag = False
+            self.send_goal(self.resume_x, self.resume_y)
+        else:
+            self.current_idx += 1
+            self.send_next_goal()
 
     def feedback_callback(self, feedback_msg):
         dist = feedback_msg.feedback.distance_remaining

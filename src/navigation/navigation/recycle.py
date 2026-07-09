@@ -141,9 +141,9 @@ class Recycle(Node):
                 if self.index == 0:
                     await self.rotate_by(180)
                 elif self.index == 1:
-                    await self.rotate_by(120)
+                    await self.rotate_by(130)
                 elif self.index == 2:
-                    await self.rotate_by(100)
+                    await self.rotate_by(130)
                 
                 result.success = True
                 result.message = "done"
