@@ -53,7 +53,7 @@ class YoloNode(Node):
     def listener_callback(self, msg):
         self.frame_count += 1
 
-        if self.frame_count % 5 != 0:
+        if self.frame_count % 1 != 0:
             return
 
         
