@@ -12,8 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         # 이 부분이 가장 중요합니다!
-        (os.path.join('share', package_name, 'msg'), glob('msg/*.msg'))
-
+        (os.path.join('share', package_name, 'msg'), glob('msg/*.msg')),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py'))
     ],
     install_requires=['setuptools'],
     zip_safe=True,
