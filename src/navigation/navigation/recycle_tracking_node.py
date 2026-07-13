@@ -160,7 +160,9 @@ class RecycleTrackingNode(Node):
                 init_diff = 320 - target_x
                 msg = Twist()
                 # 0.2 -> 0.05
+
                 msg.angular.z = (1 if init_diff > 0 else -1) * 0.05
+
                 self.cmd_vel_pub.publish(msg)
                     
                 time.sleep(0.05)
@@ -180,9 +182,12 @@ class RecycleTrackingNode(Node):
                 continue
             
             # 1. 실시간 중심점 계산
+
             target_x = self.latest_object.coord[0]
             #target_x = current_x
             diff = 320 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
+
+
                 # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
             msg = Twist()
             # 0.2 -> 0.05
@@ -204,6 +209,7 @@ class RecycleTrackingNode(Node):
 
 # 박스가 없어지는 문제. 
     def approach_robot(self, goal_handle):
+
         target_x = self.latest_object.coord[0]
         #target_x = current_x
         diff = 320 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
@@ -211,6 +217,7 @@ class RecycleTrackingNode(Node):
 
         if abs(diff) >= 20:
             self.align_robot(target_x)
+
         
 
         # 로봇이 직진하는 속력.
@@ -259,7 +266,9 @@ class RecycleTrackingNode(Node):
 
             self.cmd_vel_pub.publish(Twist())
 
+
         self.cmd_vel_pub.publish(Twist()) # 접근 완료 시 정지
+
         self.get_logger().info("접근 완료")
 
         return True
