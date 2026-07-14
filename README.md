@@ -67,5 +67,5 @@ pip install opencv-python
 - Gazebo 
 - RViz2 
 - Python 3 
-- Ultralytics YOLOv8 
+- Ultralytics YOLOv8n
 - OpenCV
