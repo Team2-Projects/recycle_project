@@ -60,13 +60,6 @@ pip install ultralytics
 pip install opencv-python
 ```
 
-## Build
-```bash
-cd ~/turtlebot3_ws
-colcon build --symlink-install
-source install/setup.bash
-```
-
 ## Requirements 
 - Ubuntu 22.04 
 - ROS2 Humble 
