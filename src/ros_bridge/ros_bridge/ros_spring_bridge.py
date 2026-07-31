@@ -6,6 +6,9 @@ from sensor_msgs.msg import BatteryState
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CompressedImage
 from nav_msgs.msg import OccupancyGrid
+import tf2_ros
+from geometry_msgs.msg import TransformStamped
+
 from rclpy.qos import (
     QoSProfile,
     ReliabilityPolicy,
@@ -16,6 +19,7 @@ from my_yolo_cpp_pkg import detected_object_id
 
 import websocket
 import json
+import math
 
 object_name = {0: 'can', 1: 'paper', 2: 'plastic'}
 class SpringBridge(Node):
@@ -26,6 +30,7 @@ class SpringBridge(Node):
         self.ws = websocket.WebSocket()
         self.ws.connect("ws://192.168.0.16:8080/robot")
 
+        # battery
         self.latest_battery = None
         self.subscription_battery = self.create_subscription(
             BatteryState,
@@ -38,6 +43,7 @@ class SpringBridge(Node):
             self.send_battery
         )
 
+        # odom
         self.subscription_odom = self.create_subscription(
             Odometry,
             '/odom',
@@ -45,6 +51,19 @@ class SpringBridge(Node):
             10
         )
 
+        # tf
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(
+            self.tf_buffer,
+            self
+        )
+
+        self.create_timer(
+            0.2,
+            self.send_robot_pose
+        )
+
+        # object
         self.object_sub = self.create_subscription(
             detected_object_id.DetectedObject,
             '/detected_object_info',
@@ -52,26 +71,13 @@ class SpringBridge(Node):
             10
         )
 
+        # camera
         self.create_subscription(
             CompressedImage,
             "/image_raw/compressed",
             self.camera_callback,
             10
         )
-
-        map_qos = QoSProfile(
-            depth=1,
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL
-        )
-
-        self.create_subscription(
-            OccupancyGrid,
-            "/map",
-            self.map_callback,
-            map_qos
-        )
-
 
 
     def battery_callback(self, msg):
@@ -102,6 +108,34 @@ class SpringBridge(Node):
         
         self.get_logger().info(str(data))
 
+    def send_robot_pose(self):
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                "map",
+                "base_link",
+                rclpy.time.Time()
+            )
+            x = transform.transform.translation.x
+            y = transform.transform.translation.y
+            q = transform.transform.rotation
+
+            yaw = math.atan2(
+                2.0 * (q.w * q.z + q.x * q.y),
+                1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+            )
+            data = {
+                "type": "robot_pose",
+                "x": x,
+                "y": y,
+                "yaw": yaw
+            }
+            self.ws.send(json.dumps(data))
+
+        except Exception as e:
+            self.get_logger().warn(
+                f"TF error: {e}"
+            )
+
     def object_callback(self, msg):
         data = {
             "type": "detection",
@@ -119,20 +153,7 @@ class SpringBridge(Node):
         except Exception as e:
             self.get_logger().error(str(e))
 
-    def map_callback(self, msg):
-        data = {
-            "type": "map",
-            "width": msg.info.width,
-            "height": msg.info.height,
-            "resolution": msg.info.resolution,
-            "origin_x": msg.info.origin.position.x,
-            "origin_y": msg.info.origin.position.y,
-            "map": list(msg.data)
-        }
 
-        self.ws.send(json.dumps(data))
-
-        self.get_logger().info(str(data))
 
 
 def main():
