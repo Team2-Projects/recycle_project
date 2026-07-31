@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from my_yolo_msgs.msg import DetectedObject
 from my_yolo_msgs.srv import SetTracking
+import time
 
 object_id = {'can': 0, 'paper': 1, 'plastic': 2}
 
@@ -18,7 +19,15 @@ class YoloNode(Node):
 
         self.is_tracking = False # 추적 모드 플래그
         self.declare_parameter('conf_threshold', 0.4)
+<<<<<<< Updated upstream
         self.model = YOLO('/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/transfer_v3_openvino_model')
+=======
+        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/transfer_v3_openvino_model')
+        
+        # [시간 측정용 변수 초기화]
+        self.processing_times = []
+        
+>>>>>>> Stashed changes
         # 모델 경로를 확인하세요
         # 1. 패키지의 share 경로를 자동으로 찾음
         # package_share_directory = get_package_share_directory('my_yolo_cpp_pkg')
@@ -51,6 +60,7 @@ class YoloNode(Node):
         return distances.index(min(distances))
 
     def listener_callback(self, msg):
+
         self.frame_count += 1
 
         if self.frame_count % 1 != 0:
@@ -61,12 +71,16 @@ class YoloNode(Node):
         np_arr = np.frombuffer(msg.data, np.uint8)
         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             
+        
+        start_time = time.time()
         results = self.model.predict(source=frame, imgsz=640, conf=conf_val, verbose=False)
+        
+        # ----------------------------------------------------
+
         res = results[0]
         msg_data = DetectedObject()
 
         if len(res.boxes) > 0:
-            # [수정] 모드에 따라 타겟 선정 방식 변경
             if self.is_tracking:
                 target_idx = self.get_closest_to_center(res.boxes)
             else:
@@ -91,6 +105,27 @@ class YoloNode(Node):
             msg_data.coord = [0.0, 0.0, 0.0, 0.0]
 
         self.publisher_.publish(msg_data)
+        end_time = time.time()
+        # [시간 측정 로깅 (순수 예측 시간 기준)]
+        elapsed_time = end_time - start_time
+        self.processing_times.append(elapsed_time)
+
+        current_count = len(self.processing_times)
+
+        if current_count % 10 == 0:
+            total_elapsed = sum(self.processing_times)
+            avg_time = total_elapsed / current_count
+            fps = 1.0 / avg_time if avg_time > 0 else 0.0
+            
+            self.get_logger().info(
+                f"📊 [누적 {current_count}개] 총 소요 시간: {total_elapsed:.4f}초 | "
+                f"평균 처리 시간: {avg_time * 1000:.2f}ms | 평균 FPS: {fps:.2f} | "
+                f"img_shape: {frame.shape}"
+            )
+            
+            # 만약 50개까지만 측정하고 리셋하고 싶다면 아래 주석을 해제하세요
+            # if current_count >= 50:
+            #     self.processing_times.clear()
 
 def main(args=None):
     rclpy.init(args=args)
