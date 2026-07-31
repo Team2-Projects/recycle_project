@@ -76,6 +76,7 @@ class YoloNode(Node):
         if pred_class == 3:
             
             msg_data.id = -1
+            msg_data.confidence = 0.0
             msg_data.coord = [0.0, 0.0, 0.0, 0.0]
             self.publisher_.publish(msg_data)
         if pred_class != 3:
@@ -96,15 +97,18 @@ class YoloNode(Node):
                     
                 if best_name in object_id:
                     msg_data.id = object_id[best_name]
+                    msg_data.confidence = confidences[target_idx]
                     msg_data.coord = [float(x) for x in best_coord]
                 else:
                     msg_data.id = -1
+                    msg_data.confidence = 0.0
                     msg_data.coord = [0.0, 0.0, 0.0, 0.0]
             else:
                 msg_data.id = -1
+                msg_data.confidence = 0.0
                 msg_data.coord = [0.0, 0.0, 0.0, 0.0]
 
-            self.publisher_.publish(msg_data)
+        self.publisher_.publish(msg_data)
 
         end_time = time.time()
         elapsed_time = end_time - start_time
