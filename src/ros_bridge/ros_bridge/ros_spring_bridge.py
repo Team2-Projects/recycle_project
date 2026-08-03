@@ -6,6 +6,7 @@ from sensor_msgs.msg import BatteryState
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CompressedImage
 from nav_msgs.msg import OccupancyGrid
+from std_msgs.msg import String
 import tf2_ros
 from geometry_msgs.msg import TransformStamped
 
@@ -78,6 +79,14 @@ class SpringBridge(Node):
             "/image_raw/compressed",
             self.camera_callback,
             10
+        )
+
+        # robotStatus 
+        self.create_subscription( 
+            String, 
+            "/robot_status", 
+            self.robot_status_callback, 
+            10 
         )
 
         self.create_timer(
@@ -168,6 +177,11 @@ class SpringBridge(Node):
 
         except Exception as e:
             self.get_logger().error(str(e))
+
+    def robot_status_callback(self, msg): 
+        event = json.loads(msg.data) 
+        event["type"] = "robot_status" 
+        self.ws.send(json.dumps(event))
 
 
     def send_cpu_usage(self):

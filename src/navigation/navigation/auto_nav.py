@@ -9,8 +9,11 @@ from tf2_ros import Buffer, TransformListener
 from std_msgs.msg import Empty
 from navigation_interface.action import RecycleActionMsg
 from action_msgs.msg import GoalStatus
+from std_msgs.msg import String
+
 import time
 import math
+import json
 
 from my_yolo_cpp_pkg import detected_object_id
 from .nav_utils import normalize_angle, get_yaw_from_quaternion
@@ -43,6 +46,8 @@ class AutoNav(Node):
         self.center_y = None
 
         self.flag = False
+        self.cancel_reason = None
+        self.is_returning_home = False
 
         self.resume_x = None
         self.resume_y = None
@@ -62,7 +67,7 @@ class AutoNav(Node):
         
         self.object_sub = self.create_subscription(
             detected_object_id.DetectedObject,
-            '/detected_object_info',
+            '/classified_detected_object_info',
             self.object_callback,
             10
         )
@@ -71,6 +76,38 @@ class AutoNav(Node):
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        self.robot_status_pub = self.create_publisher(
+            String,
+            "/robot_status",
+            10
+        )
+
+        self.command_sub = self.create_subscription(
+            String,
+            "/navigation_command",
+            self.command_callback,
+            10
+        )
+
+        self.publish_event(
+            "state",
+            "Running"
+        )
+
+    def publish_event(self, eventType, status):
+        msg = String()
+        msg.data = json.dumps({
+            "eventType": eventType,
+            "status": status
+        })
+        self.robot_status_pub.publish(msg)
+
+    def command_callback(self, msg):
+        if msg.data == "STOP":
+            self.cancel_reason = "STOP"
+            if self.current_handle is not None:
+                self.current_handle.cancel_goal_async()
 
     def get_current_yaw(self):
         try:
@@ -127,6 +164,7 @@ class AutoNav(Node):
             
             # 현재 가던 자율주행 목표 취소
             if self.current_handle is not None:
+                self.cancel_reason = "OBJECT"
                 self.current_handle.cancel_goal_async()
 
     # recycle_tracking
@@ -202,6 +240,10 @@ class AutoNav(Node):
 
     def send_next_goal(self):
         if self.current_idx >= len(self.waypoints):
+            self.publish_event(
+                "state",
+                "Stop"
+            )
             self.get_logger().info('🏁 Patrol finished. Shutting down...')
             self.destroy_node()
             rclpy.shutdown()
@@ -249,10 +291,32 @@ class AutoNav(Node):
 
     def result_callback(self, future):
         status = future.result().status
+        if status == GoalStatus.STATUS_SUCCEEDED:
+            if self.is_returning_home:
+                self.publish_event(
+                    "state",
+                    "Stop"
+                )
+                self.destroy_node()
+                rclpy.shutdown()
+                return
         if status == GoalStatus.STATUS_CANCELED:
-            if self.object_found:
-                self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
-                self.launch_recycle_tracking_action()
+            if self.cancel_reason == "STOP":
+                self.cancel_reason = None
+                self.is_returning_home = True
+                self.publish_event(
+                    "state",
+                    "Return Home"
+                )
+                self.send_goal(
+                    self.home_x,
+                    self.home_y
+                )
+                return
+            if self.cancel_reason == "OBJECT":
+                if self.object_found:
+                    self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
+                    self.launch_recycle_tracking_action()
             return
 
         if status == GoalStatus.STATUS_ABORTED:
