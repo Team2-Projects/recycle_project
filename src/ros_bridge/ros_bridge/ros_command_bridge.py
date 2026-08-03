@@ -35,6 +35,19 @@ class CommandBridge(Node):
             10
         )
 
+        self.create_timer(
+            1.0,
+            self.check_launch_process
+        )
+
+    def check_launch_process(self):
+        if self.launch_process is not None:
+            if self.launch_process.poll() is not None:
+                self.get_logger().info(
+                    "Navigation launch process terminated"
+                )
+                self.launch_process = None
+
     def receive_command(self):
         try:
             # WebSocket 데이터 확인

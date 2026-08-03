@@ -30,7 +30,7 @@ class SpringBridge(Node):
         super().__init__('spring_bridge')
 
         self.ws = websocket.WebSocket()
-        self.ws.connect("ws://192.168.0.58:8080/robot")
+        self.ws.connect("ws://192.168.0.16:8080/robot")
 
         # battery
         self.latest_battery = None
@@ -119,8 +119,6 @@ class SpringBridge(Node):
 
         self.ws.send(json.dumps(data))
 
-        self.get_logger().info(str(data))
-
 
     def odom_callback(self, msg):
         data = {
@@ -130,8 +128,6 @@ class SpringBridge(Node):
             "speed": msg.twist.twist.linear.x
         }
         self.ws.send(json.dumps(data))
-        
-        self.get_logger().info(str(data))
 
     def send_robot_pose(self):
         try:
@@ -179,9 +175,15 @@ class SpringBridge(Node):
             self.get_logger().error(str(e))
 
     def robot_status_callback(self, msg): 
-        event = json.loads(msg.data) 
-        event["type"] = "robot_status" 
-        self.ws.send(json.dumps(event))
+        try:
+            event = json.loads(msg.data)
+            event["type"] = "robot_status"
+
+            self.ws.send(json.dumps(event))
+            self.get_logger().info("robot_status sent")
+
+        except Exception as e:
+            self.get_logger().error(f"robot_status send failed: {e}")
 
 
     def send_cpu_usage(self):
