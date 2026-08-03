@@ -20,6 +20,7 @@ from my_yolo_cpp_pkg import detected_object_id
 import websocket
 import json
 import math
+import psutil  # CPU 사용량 측정을 위한 패키지 추가
 
 object_name = {0: 'can', 1: 'paper', 2: 'plastic'}
 class SpringBridge(Node):
@@ -28,7 +29,7 @@ class SpringBridge(Node):
         super().__init__('spring_bridge')
 
         self.ws = websocket.WebSocket()
-        self.ws.connect("ws://192.168.0.16:8080/robot")
+        self.ws.connect("ws://192.168.0.58:8080/robot")
 
         # battery
         self.latest_battery = None
@@ -78,6 +79,21 @@ class SpringBridge(Node):
             self.camera_callback,
             10
         )
+
+        self.create_timer(
+            1.0,
+            self.send_cpu_usage
+        )
+
+        self.create_timer(
+            1.0,
+            self.send_memory_usage
+        )
+        self.create_timer(
+            1.0,
+            self.send_disk_usage
+        )
+
 
 
     def battery_callback(self, msg):
@@ -154,7 +170,43 @@ class SpringBridge(Node):
             self.get_logger().error(str(e))
 
 
+    def send_cpu_usage(self):
+        # interval=None으로 설정해야 노드가 멈추지(blocking) 않고 이전 측정 이후의 CPU 사용률을 바로 가져옵니다.
+        cpu_percent = psutil.cpu_percent(interval=None)
 
+        data = {
+            "type": "cpu",
+            "cpu_usage": cpu_percent
+        }
+        
+
+        self.ws.send(json.dumps(data))
+        self.get_logger().info(str(data))
+
+
+    def send_memory_usage(self):
+        # 메모리 사용률(%) 가져오기
+        mem_percent = psutil.virtual_memory().percent
+
+        data = {
+            "type": "memory",
+            "memory_usage": mem_percent
+        }
+
+        self.ws.send(json.dumps(data))
+        self.get_logger().info(str(data))
+
+    def send_disk_usage(self):
+        # 루트 디렉터리('/') 기준 디스크 사용률(%) 가져오기
+        disk_percent = psutil.disk_usage('/').percent
+
+        data = {
+            "type": "disk",
+            "disk_usage": disk_percent
+        }
+
+        self.ws.send(json.dumps(data))
+        self.get_logger().info(str(data))
 
 def main():
     rclpy.init()
