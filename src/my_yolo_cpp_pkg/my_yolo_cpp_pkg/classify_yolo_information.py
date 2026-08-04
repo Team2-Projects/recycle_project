@@ -41,6 +41,8 @@ class YoloNode(Node):
         
         self.srv = self.create_service(SetTracking, 'set_tracking_mode', self.srv_callback)
 
+        self.target_idx = 0;
+        self.pred_class = 0;
     def srv_callback(self, request, response):
         self.is_tracking = request.enable
         self.get_logger().info(f"🚀 추적 모드 변경: {self.is_tracking}")
@@ -71,33 +73,32 @@ class YoloNode(Node):
         # 2. [수정] OpenVINO 모델 추론 실행
         result = self.compiled_classify_model({self.input_key: frame_classify})[self.output_key]
 
-        pred_class = np.argmax(result[0])
+        self.pred_class = np.argmax(result[0])
 
-        if pred_class == 3:
+        if self.pred_class == 3:
             
             msg_data.id = -1
             msg_data.confidence = 0.0
             msg_data.coord = [0.0, 0.0, 0.0, 0.0]
             self.publisher_.publish(msg_data)
-        if pred_class != 3:
+        if self.pred_class != 3:
             results = self.model.predict(source=frame, imgsz=640, conf=conf_val, verbose=False)
             res = results[0]
             # self.get_logger().info('box_number = {}'.format(len(res.boxes)))
-
+            confidences = res.boxes.conf.tolist()
             if len(res.boxes) > 0:
                 if self.is_tracking:
-                    target_idx = self.get_closest_to_center(res.boxes)
+                    self.target_idx = self.get_closest_to_center(res.boxes)
                 else:
-                    confidences = res.boxes.conf.tolist()
-                    target_idx = confidences.index(max(confidences))
+                    self.target_idx = confidences.index(max(confidences))
                     
-                best_cls_id = int(res.boxes.cls[target_idx].item())
+                best_cls_id = int(res.boxes.cls[self.target_idx].item())
                 best_name = res.names[best_cls_id]
-                best_coord = res.boxes.xywh[target_idx].tolist()
+                best_coord = res.boxes.xywh[self.target_idx].tolist()
                     
                 if best_name in object_id:
                     msg_data.id = object_id[best_name]
-                    msg_data.confidence = confidences[target_idx]
+                    msg_data.confidence = confidences[self.target_idx]
                     msg_data.coord = [float(x) for x in best_coord]
                 else:
                     msg_data.id = -1
@@ -120,7 +121,7 @@ class YoloNode(Node):
             total_elapsed = sum(self.processing_times)
             avg_time = total_elapsed / current_count
             fps = 1.0 / avg_time if avg_time > 0 else 0.0
-            self.get_logger().info('pred_class = {}'.format(pred_class))
+            self.get_logger().info('pred_class = {}'.format(self.pred_class))
             self.get_logger().info(
                 f"📊 [누적 {current_count}개] 총 소요 시간: {total_elapsed:.2f}초 | "
                 f"평균 처리 시간: {avg_time * 1000:.2f}ms | 평균 FPS: {fps:.2f}"
