@@ -89,6 +89,14 @@ class SpringBridge(Node):
             10 
         )
 
+        # robotTask
+        self.create_subscription( 
+            String, 
+            "/robot_task", 
+            self.robot_task_callback, 
+            10 
+        )
+
         self.create_timer(
             1.0,
             self.send_cpu_usage
@@ -127,7 +135,7 @@ class SpringBridge(Node):
             "y": msg.pose.pose.position.y,
             "speed": msg.twist.twist.linear.x
         }
-        self.ws.send(json.dumps(data))
+        # self.ws.send(json.dumps(data))
 
     def send_robot_pose(self):
         try:
@@ -150,7 +158,7 @@ class SpringBridge(Node):
                 "y": y,
                 "yaw": yaw
             }
-            self.ws.send(json.dumps(data))
+            # self.ws.send(json.dumps(data))
 
         except Exception as e:
             self.get_logger().warn(
@@ -163,7 +171,7 @@ class SpringBridge(Node):
             "object_name": object_name.get(msg.id, "-"),
             "confidence": msg.confidence
         }
-        self.ws.send(json.dumps(data))
+        # self.ws.send(json.dumps(data))
 
         self.get_logger().info(str(data))
 
@@ -185,6 +193,12 @@ class SpringBridge(Node):
         except Exception as e:
             self.get_logger().error(f"robot_status send failed: {e}")
 
+    def robot_task_callback(self, msg):
+        event = json.loads(msg.data)
+        event["type"] = "robot_task"
+        self.ws.send(json.dumps(event))
+        self.get_logger().info("robot_task sent")
+
 
     def send_cpu_usage(self):
         # interval=None으로 설정해야 노드가 멈추지(blocking) 않고 이전 측정 이후의 CPU 사용률을 바로 가져옵니다.
@@ -196,8 +210,7 @@ class SpringBridge(Node):
         }
         
 
-        self.ws.send(json.dumps(data))
-        self.get_logger().info(str(data))
+        # self.ws.send(json.dumps(data))
 
 
     def send_memory_usage(self):
@@ -209,8 +222,7 @@ class SpringBridge(Node):
             "memory_usage": mem_percent
         }
 
-        self.ws.send(json.dumps(data))
-        self.get_logger().info(str(data))
+        # self.ws.send(json.dumps(data))
 
     def send_disk_usage(self):
         # 루트 디렉터리('/') 기준 디스크 사용률(%) 가져오기
@@ -221,8 +233,7 @@ class SpringBridge(Node):
             "disk_usage": disk_percent
         }
 
-        self.ws.send(json.dumps(data))
-        self.get_logger().info(str(data))
+        # self.ws.send(json.dumps(data))
 
 def main():
     rclpy.init()

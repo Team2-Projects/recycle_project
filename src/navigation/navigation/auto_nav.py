@@ -22,6 +22,7 @@ from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
 
 ACTION_RECYCLE_NODE = 'action_recycle_node'
 
+object_name = {0: 'can', 1: 'paper', 2: 'plastic'}
 class AutoNav(Node):
 
     def __init__(self):
@@ -31,6 +32,9 @@ class AutoNav(Node):
         self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._recycle_client = ActionClient(self, RecycleActionMsg, 'recycle_action')
         self._recycle_tracking_client = ActionClient(self, RecycleActionMsg, 'recycle_tracking_action')
+        self._action_client.wait_for_server()
+        self._recycle_client.wait_for_server()
+        self._recycle_tracking_client.wait_for_server()
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
         self.waypoints          = []
@@ -83,6 +87,12 @@ class AutoNav(Node):
             10
         )
 
+        self.robot_task_pub = self.create_publisher(
+            String,
+            "/robot_task",
+            10
+        )
+
         self.command_sub = self.create_subscription(
             String,
             "/navigation_command",
@@ -90,18 +100,35 @@ class AutoNav(Node):
             10
         )
 
-        self.publish_event(
+        self.publish_robot_state(
             "state",
             "Running"
         )
+        
+        self.publish_robot_task(
+            "PATROL_START",
+            "순찰 시작",
+            "",
+            "Task"
+        )
 
-    def publish_event(self, eventType, status):
+    def publish_robot_state(self, eventType, status):
         msg = String()
         msg.data = json.dumps({
             "eventType": eventType,
             "status": status
         })
         self.robot_status_pub.publish(msg)
+
+    def publish_robot_task(self, eventType, message, note, status):
+        msg = String()
+        msg.data = json.dumps({
+            "eventType": eventType,
+            "message": message,
+            "note": note,
+            "status": status
+        })
+        self.robot_task_pub.publish(msg)
 
     def command_callback(self, msg):
         if msg.data == "STOP":
@@ -149,6 +176,13 @@ class AutoNav(Node):
         else:
             self.object_found = True
 
+            self.publish_robot_task(
+                "OBJECT_DETECTED",
+                "물체 감지",
+                f"물체: {object_name.get(msg.id, '-')} / 신뢰도: {msg.confidence:.2f}",
+                "Detect"
+            )
+
             self.target_x = float(msg.coord[0])
             self.target_y = float(msg.coord[1])
             self.target_h = float(msg.coord[3])
@@ -169,12 +203,17 @@ class AutoNav(Node):
 
     # recycle_tracking
     def launch_recycle_tracking_action(self):
+        self.publish_robot_task(
+            "OBJECT_PICKUP_START",
+            "수거 시작",
+            "",
+            "Task"
+        )
         goal_msg = RecycleActionMsg.Goal()
         goal_msg.target_x = self.target_x
         goal_msg.target_y = self.target_y
         goal_msg.target_h = self.target_h
         self.get_logger().info('🚀 recycle_tracking_action 호출 (회전 + 접근)')
-        self._recycle_tracking_client.wait_for_server()
         future = self._recycle_tracking_client.send_goal_async(goal_msg)
         future.add_done_callback(self.recycle_tracking_goal_response_callback)
 
@@ -206,7 +245,6 @@ class AutoNav(Node):
         goal_msg.center_y = self.center_y
 
         self.get_logger().info('🚀 recycle_action 호출 (HOME 이동 + 후진 + 회전)')
-        self._recycle_client.wait_for_server()
         future = self._recycle_client.send_goal_async(goal_msg)
         future.add_done_callback(self.recycle_goal_response_callback)
 
@@ -225,8 +263,27 @@ class AutoNav(Node):
 
         if not result.success:
             self.get_logger().warn(f'Recycle 실패: {result.message}')
+            self.publish_robot_task(
+                "OBJECT_PICKUP_FAIL",
+                "분리수거 실패",
+                "",
+                "Error"
+            )
             self.object_found = False
             return
+
+        self.publish_robot_task(
+            "OBJECT_PICKUP_SUCCESS",
+            "수거 성공",
+            "",
+            "Task"
+        )
+        self.publish_robot_task(
+            "PATROL_RESUME",
+            "순찰 재개",
+            "",
+            "Task"
+        )
 
         self.object_found = False
         
@@ -240,7 +297,7 @@ class AutoNav(Node):
 
     def send_next_goal(self):
         if self.current_idx >= len(self.waypoints):
-            self.publish_event(
+            self.publish_robot_state(
                 "state",
                 "Stop"
             )
@@ -271,7 +328,6 @@ class AutoNav(Node):
         goal_msg      = NavigateToPose.Goal()
         goal_msg.pose = pose
 
-        self._action_client.wait_for_server()
         future = self._action_client.send_goal_async(
             goal_msg,
             feedback_callback=self.feedback_callback
@@ -293,9 +349,15 @@ class AutoNav(Node):
         status = future.result().status
         if status == GoalStatus.STATUS_SUCCEEDED:
             if self.is_returning_home:
-                self.publish_event(
+                self.publish_robot_state(
                     "state",
                     "Stop"
+                )
+                self.publish_robot_task(
+                    "PATROL_COMPLETE",
+                    "순찰 종료",
+                    "",
+                    "Task"
                 )
                 self.destroy_node()
                 rclpy.shutdown()
@@ -304,9 +366,15 @@ class AutoNav(Node):
             if self.cancel_reason == "STOP":
                 self.cancel_reason = None
                 self.is_returning_home = True
-                self.publish_event(
+                self.publish_robot_state(
                     "state",
                     "Return Home"
+                )
+                self.publish_robot_task(
+                    "USER_COMMAND",
+                    "사용자 명령",
+                    "순찰 종료",
+                    "Task"
                 )
                 self.send_goal(
                     self.home_x,
