@@ -1,19 +1,14 @@
 import rclpy
-import requests
 from rclpy.node import Node
 
 from sensor_msgs.msg import BatteryState
-from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CompressedImage
-from nav_msgs.msg import OccupancyGrid
 from std_msgs.msg import String
 import tf2_ros
-from geometry_msgs.msg import TransformStamped
-
 from rclpy.qos import (
     QoSProfile,
     ReliabilityPolicy,
-    DurabilityPolicy
+    HistoryPolicy
 )
 
 from my_yolo_cpp_pkg import detected_object_id
@@ -22,6 +17,7 @@ import websocket
 import json
 import math
 import psutil  # CPU 사용량 측정을 위한 패키지 추가
+import time
 
 object_name = {0: 'can', 1: 'paper', 2: 'plastic'}
 class SpringBridge(Node):
@@ -34,6 +30,8 @@ class SpringBridge(Node):
 
         # battery
         self.latest_battery = None
+        self.last_sent_battery = None
+        self.filtered_battery = None
         self.subscription_battery = self.create_subscription(
             BatteryState,
             '/battery_state',
@@ -45,15 +43,8 @@ class SpringBridge(Node):
             self.send_battery
         )
 
-        # odom
-        self.subscription_odom = self.create_subscription(
-            Odometry,
-            '/odom',
-            self.odom_callback,
-            10
-        )
-
         # tf
+        self.last_pose = None
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(
             self.tf_buffer,
@@ -61,24 +52,30 @@ class SpringBridge(Node):
         )
 
         self.create_timer(
-            0.2,
+            0.5,
             self.send_robot_pose
         )
 
         # object
-        self.object_sub = self.create_subscription(
-            detected_object_id.DetectedObject,
-            '/detected_object_info',
+        self.create_subscription(
+            String,
+            "object_found",
             self.object_callback,
             10
         )
 
         # camera
+        self.last_camera_time = 0
+        camera_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
         self.create_subscription(
             CompressedImage,
             "/image_raw/compressed",
             self.camera_callback,
-            10
+            camera_qos
         )
 
         # robotStatus 
@@ -97,45 +94,64 @@ class SpringBridge(Node):
             10 
         )
 
+        # system
+        psutil.cpu_percent(interval=None)
         self.create_timer(
-            1.0,
-            self.send_cpu_usage
+            3.0,
+            self.send_system_usage
         )
 
-        self.create_timer(
-            1.0,
-            self.send_memory_usage
-        )
-        self.create_timer(
-            1.0,
-            self.send_disk_usage
-        )
+    def send_ws(self, data):
+        try:
+            self.ws.send(json.dumps(data))
 
+        except Exception as e:
+            self.get_logger().error(
+                f"WebSocket send error: {e}"
+            )
 
+    def normalize_angle(self, angle):
+        while angle > math.pi:
+            angle -= 2 * math.pi
+
+        while angle < -math.pi:
+            angle += 2 * math.pi
+
+        return angle
 
     def battery_callback(self, msg):
-        self.latest_battery = msg.percentage
+        battery = msg.percentage
+        alpha = 0.8
+
+        if self.filtered_battery is None:
+            self.filtered_battery = battery
+        else:
+            self.filtered_battery = (
+                self.filtered_battery * alpha
+                + battery * (1 - alpha)
+            )
+
+        self.latest_battery = self.filtered_battery
 
     def send_battery(self):
         if self.latest_battery is None:
             return
+
+        if self.last_sent_battery is not None:
+            diff = abs(self.latest_battery - self.last_sent_battery)
+            if diff < 1.0:
+                return
+            if diff > 3.0:
+                return
+
+        self.last_sent_battery = self.latest_battery
 
         data = {
             "type": "battery",
             "battery": self.latest_battery
         }
 
-        self.ws.send(json.dumps(data))
-
-
-    def odom_callback(self, msg):
-        data = {
-            "type": "odom",
-            "x": msg.pose.pose.position.x,
-            "y": msg.pose.pose.position.y,
-            "speed": msg.twist.twist.linear.x
-        }
-        # self.ws.send(json.dumps(data))
+        self.send_ws(data)
 
     def send_robot_pose(self):
         try:
@@ -152,13 +168,27 @@ class SpringBridge(Node):
                 2.0 * (q.w * q.z + q.x * q.y),
                 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
             )
+
+            if self.last_pose is not None:
+                dx = abs(x - self.last_pose["x"])
+                dy = abs(y - self.last_pose["y"])
+                dyaw = abs(
+                    self.normalize_angle(
+                        yaw - self.last_pose["yaw"]
+                    )
+                )
+
+                if dx < 0.02 and dy < 0.02 and dyaw < 0.05:
+                    return
+
             data = {
                 "type": "robot_pose",
                 "x": x,
                 "y": y,
                 "yaw": yaw
             }
-            # self.ws.send(json.dumps(data))
+            self.last_pose = data
+            self.send_ws(data)
 
         except Exception as e:
             self.get_logger().warn(
@@ -166,74 +196,61 @@ class SpringBridge(Node):
             )
 
     def object_callback(self, msg):
-        data = {
-            "type": "detection",
-            "object_name": object_name.get(msg.id, "-"),
-            "confidence": msg.confidence
-        }
-        # self.ws.send(json.dumps(data))
+        try:
+            event = json.loads(msg.data)
+            event["type"] = "detection"
+            self.send_ws(event)
 
-        self.get_logger().info(str(data))
+        except Exception as e:
+            self.get_logger().error(
+                f"object error: {e}"
+            )
 
     def camera_callback(self, msg):
         try:
+            now = time.time()
+            if now - self.last_camera_time < 0.2:
+                return
+            self.last_camera_time = now
             self.ws.send(msg.data, opcode=websocket.ABNF.OPCODE_BINARY)
 
         except Exception as e:
-            self.get_logger().error(str(e))
+            self.get_logger().error(
+                f"Camera send error: {e}"
+            )
 
     def robot_status_callback(self, msg): 
         try:
             event = json.loads(msg.data)
             event["type"] = "robot_status"
 
-            self.ws.send(json.dumps(event))
-            self.get_logger().info("robot_status sent")
+            self.send_ws(event)
 
         except Exception as e:
-            self.get_logger().error(f"robot_status send failed: {e}")
+            self.get_logger().error(
+                f"robot_status error: {e}"
+            )
 
     def robot_task_callback(self, msg):
-        event = json.loads(msg.data)
-        event["type"] = "robot_task"
-        self.ws.send(json.dumps(event))
-        self.get_logger().info("robot_task sent")
+        try:
+            event = json.loads(msg.data)
+            event["type"] = "robot_task"
+            self.send_ws(event)
 
+        except Exception as e:
+            self.get_logger().error(
+                f"robot_task error: {e}"
+            )
 
-    def send_cpu_usage(self):
-        # interval=None으로 설정해야 노드가 멈추지(blocking) 않고 이전 측정 이후의 CPU 사용률을 바로 가져옵니다.
-        cpu_percent = psutil.cpu_percent(interval=None)
-
+    def send_system_usage(self):
         data = {
-            "type": "cpu",
-            "cpu_usage": cpu_percent
+            "type": "system",
+            "cpu": psutil.cpu_percent(interval=None),
+            "memory": psutil.virtual_memory().percent,
+            "disk": psutil.disk_usage('/').percent
         }
-        
+        self.send_ws(data)
 
-        # self.ws.send(json.dumps(data))
-
-
-    def send_memory_usage(self):
-        # 메모리 사용률(%) 가져오기
-        mem_percent = psutil.virtual_memory().percent
-
-        data = {
-            "type": "memory",
-            "memory_usage": mem_percent
-        }
-
-        # self.ws.send(json.dumps(data))
-
-    def send_disk_usage(self):
-        # 루트 디렉터리('/') 기준 디스크 사용률(%) 가져오기
-        disk_percent = psutil.disk_usage('/').percent
-
-        data = {
-            "type": "disk",
-            "disk_usage": disk_percent
-        }
-
-        # self.ws.send(json.dumps(data))
 
 def main():
     rclpy.init()

@@ -81,6 +81,12 @@ class AutoNav(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
+        self.object_found_pub = self.create_publisher(
+            String,
+            "/object_found",
+            10
+        )
+
         self.robot_status_pub = self.create_publisher(
             String,
             "/robot_status",
@@ -111,6 +117,15 @@ class AutoNav(Node):
             "",
             "Task"
         )
+
+    def.publish_object_found(self, object_name, confidence):
+        msg = String()
+        msg.data = json.dumps({
+            "object_name": object_name,
+            "confidence": confidence,
+            "status": "Success"
+        })
+        self.object_found_pub.publish(msg)
 
     def publish_robot_state(self, eventType, status):
         msg = String()
@@ -175,6 +190,11 @@ class AutoNav(Node):
             return
         else:
             self.object_found = True
+
+            self.publish_object_found(
+                object_name.get(msg.id, '-'),
+                msg.confidence:.2f
+            )
 
             self.publish_robot_task(
                 "OBJECT_DETECTED",
