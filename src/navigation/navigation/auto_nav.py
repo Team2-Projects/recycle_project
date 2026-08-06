@@ -118,7 +118,7 @@ class AutoNav(Node):
             "Task"
         )
 
-    def.publish_object_found(self, object_name, confidence):
+    def publish_object_found(self, object_name, confidence):
         msg = String()
         msg.data = json.dumps({
             "object_name": object_name,
@@ -173,8 +173,8 @@ class AutoNav(Node):
         self.waypoints = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
         self.home_x = self.waypoints[-1][0]
         self.home_y = self.waypoints[-1][1]
-        self.center_x = self.waypoints[2][0]
-        self.center_y = self.waypoints[2][1]
+        # self.center_x = 1.8
+        # self.center_y = -1.5
 
         self.current_idx = 0
         self.is_running = True
@@ -193,7 +193,7 @@ class AutoNav(Node):
 
             self.publish_object_found(
                 object_name.get(msg.id, '-'),
-                msg.confidence:.2f
+                f"{msg.confidence:.2f}"
             )
 
             self.publish_robot_task(
@@ -261,8 +261,8 @@ class AutoNav(Node):
         goal_msg.current_idx = self.current_idx
         goal_msg.home_x = self.home_x
         goal_msg.home_y = self.home_y
-        goal_msg.center_x = self.center_x
-        goal_msg.center_y = self.center_y
+        # goal_msg.center_x = self.center_x
+        # goal_msg.center_y = self.center_y
 
         self.get_logger().info('🚀 recycle_action 호출 (HOME 이동 + 후진 + 회전)')
         future = self._recycle_client.send_goal_async(goal_msg)
@@ -309,11 +309,12 @@ class AutoNav(Node):
         
         self.is_resuming = True
         self.get_logger().info(f'↩️ 원래 목표로 복귀 시작')
-        if self.current_idx in (3, 4):
-            self.send_goal(self.center_x, self.center_y)
-            self.flag = True
-        else:
-            self.send_goal(self.resume_x, self.resume_y)
+        # if self.current_idx in (3, 4):
+        #     self.send_goal(self.center_x, self.center_y)
+        #     self.flag = True
+        # else:
+        #     self.send_goal(self.resume_x, self.resume_y)
+        self.send_goal(self.resume_x, self.resume_y)
 
     def send_next_goal(self):
         if self.current_idx >= len(self.waypoints):
@@ -419,12 +420,15 @@ class AutoNav(Node):
             x, y = self.waypoints[self.current_idx]
             self.get_logger().info(f'✅ Reached ({x:.2f}, {y:.2f})')
             
-        if self.flag:
-            self.flag = False
-            self.send_goal(self.resume_x, self.resume_y)
-        else:
-            self.current_idx += 1
-            self.send_next_goal()
+        # if self.flag:
+        #     self.flag = False
+        #     self.send_goal(self.resume_x, self.resume_y)
+        # else:
+        #     self.current_idx += 1
+        #     self.send_next_goal()
+
+        self.current_idx += 1
+        self.send_next_goal()
 
     def feedback_callback(self, feedback_msg):
         dist = feedback_msg.feedback.distance_remaining

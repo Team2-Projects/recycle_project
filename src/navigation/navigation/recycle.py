@@ -23,6 +23,9 @@ class Recycle(Node):
     def __init__(self):
         super().__init__("recycle")
 
+        self.waypoints = []
+        self.current_idx = 0
+
         self.cb_group = ReentrantCallbackGroup()
 
         self._action_server = ActionServer(
@@ -92,67 +95,68 @@ class Recycle(Node):
 
     async def execute_callback(self, goal_handle):
         try:
+            result = RecycleActionMsg.Result()
             request = goal_handle.request
             self.index = request.index
             self.current_idx = request.current_idx
             self.home_x = request.home_x
             self.home_y = request.home_y
-            self.center_x = request.center_x
-            self.center_y = request.center_y
+            # self.center_x = request.center_x
+            # self.center_y = request.center_y
 
-            self.recycle_point0_x = self.home_x - 0.8
-            self.recycle_point0_y = self.home_y + 0.5
-            self.recycle_point1_x = self.home_x - 0.8
-            self.recycle_point1_y = self.home_y
-            self.recycle_point2_x = self.home_x - 0.8
-            self.recycle_point2_y = self.home_y - 0.5
+            self.recycle_point0 = [
+                (-0.35, -0.5),
+                (-0.7, -0.5)
+            ]
+            self.recycle_point1 = [
+                (-0.35, -1.0),
+                (-0.7, -1.0)
+            ]
+            self.recycle_point2 = [
+                (-0.35, -1.5),
+                (-0.7, -1.5)
+            ]
+            self.recycle_point3 = [
+                (-0.35, -2.0),
+                (-0.7, -2.0)
+            ]
+            self.recycle_point4 = [
+                (-0.35, -2.5),
+                (-0.7, -2.5)
+            ]
 
             if self.index == 0:
-                target_x = self.recycle_point0_x
-                target_y = self.recycle_point0_y
+                self.waypoints = self.recycle_point0
             elif self.index == 1:
-                target_x = self.recycle_point1_x
-                target_y = self.recycle_point1_y
+                self.waypoints = self.recycle_point1
             elif self.index == 2:
-                target_x = self.recycle_point2_x
-                target_y = self.recycle_point2_y
+                self.waypoints = self.recycle_point2
+            elif self.index == 3:
+                self.waypoints = self.recycle_point3
+            elif self.index == 4:
+                self.waypoints = self.recycle_point4
             else:
-                target_x = self.home_x
-                target_y = self.home_y
+                result.success = False
+                result.message = "invalid index"
+                goal_handle.abort()
+                return result
 
-            self.get_logger().info(
-                f"Recycle Start: HOME으로 이동 ({self.home_x:.2f}, {self.home_y:.2f})"
-            )
+            for i, (target_x, target_y) in enumerate(self.waypoints):
+                success = await self.go_to_pose(target_x, target_y)
 
-            result = RecycleActionMsg.Result()
-
-            if self.current_idx in (3, 4):
-                center_success = await self.go_to_pose(self.center_x, self.center_y)
-
-                if not center_success:
+                if not success:
                     result.success = False
+                    result.message = f"Waypoint {i+1} 이동 실패"
                     goal_handle.abort()
                     return result
 
-            target_success = await self.go_to_pose(target_x, target_y)
-
-            if target_success:
-                await self.move_backward()
-                if self.index == 0:
-                    await self.rotate_by(180)
-                elif self.index == 1:
-                    await self.rotate_by(130)
-                elif self.index == 2:
-                    await self.rotate_by(130)
+            await self.move_backward()
+            
+            await self.go_to_pose(self.home_x, self.home_y)
                 
-                result.success = True
-                result.message = "done"
-                goal_handle.succeed()
-            else:
-                self.get_logger().warn('HOME 이동 실패, 후진/회전 스킵')
-                result.success = False
-                result.message = "home navigation failed"
-                goal_handle.abort()
+            result.success = True
+            result.message = "done"
+            goal_handle.succeed()
 
             return result
         except Exception as e:
@@ -176,7 +180,7 @@ class Recycle(Node):
             goal_msg = NavigateToPose.Goal()
             goal_msg.pose = pose
 
-            self._action_client.wait_for_server()
+            await self._action_client.wait_for_server()
 
             goal_handle = await self._action_client.send_goal_async(goal_msg)
 
@@ -214,43 +218,6 @@ class Recycle(Node):
         msg.linear.x = speed
         msg.angular.z = 0.0
         await self._publish_for_duration(msg, duration)
-
-    async def rotate_by(self, angle):
-        start_yaw = self.get_current_yaw()
-        if start_yaw is None:
-            self.get_logger().warn('TF 획득 실패, 회전 스킵')
-            return
-
-        target_yaw = normalize_angle(start_yaw + math.radians(angle))  # 100도 목표
-
-        msg = Twist()
-        msg.linear.x = 0.0
-        msg.angular.z = 0.5
-
-        angle_tolerance = math.radians(8.0)  # 8도 오차까지 허용
-        control_period = 0.05                # 20Hz 제어 주기
-        max_duration = 10.0                  # 안전장치: 10초 넘으면 강제 종료
-        elapsed = 0.0
-
-        try:
-            while elapsed < max_duration:
-                current_yaw = self.get_current_yaw()
-
-                if current_yaw is not None:
-                    diff = abs(normalize_angle(target_yaw - current_yaw))
-                    if diff <= angle_tolerance:
-                        break
-                    self.cmd_vel_pub.publish(msg)
-
-                await self._sleep(control_period)
-                elapsed += control_period
-
-            if elapsed >= max_duration:
-                self.get_logger().warn('회전 타임아웃, 강제 종료')
-
-            self.get_logger().info('100도 회전 완료')
-        finally:
-            self.stop_robot()
 
     def stop_robot(self):
         stop_msg = Twist()
