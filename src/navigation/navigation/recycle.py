@@ -48,8 +48,21 @@ class Recycle(Node):
 
         self.warmup()
 
-    # 노드 생성 직후 TF 버퍼가 채워질 시간을 준다. __init__ 안이라 아직
-    # executor.spin()이 돌기 전이므로 여기서는 blocking spin_once로 충분하다.
+        self.command_sub = self.create_subscription(
+            String,
+            "/navigation_command",
+            self.command_callback,
+            10
+        )
+
+    def command_callback(self, msg):
+        if msg.data == "STOP":
+            goal_handle.abort()
+            result = RecycleActionMsg.Result()
+            result.success = False
+            result.message = "STOP"
+            return result
+
     def warmup(self):
         start_time = self.get_clock().now()
         while (self.get_clock().now() - start_time).nanoseconds < 1.0e9:
@@ -76,12 +89,9 @@ class Recycle(Node):
         try:
             await future
         finally:
-            # 태스크가 취소되는 경우에도 waiter 목록에 남아있지 않도록 정리
             if not future.done():
                 future.cancel()
 
-    # 주어진 Twist를 rate_hz 주기로 publish하면서 duration 초 동안 기다린다.
-    # 별도 publish용 타이머를 만들지 않고 _sleep으로 쪼개면서 그 사이 publish한다.
     async def _publish_for_duration(self, twist: Twist, duration: float, rate_hz: float = 20.0):
         period = 1.0 / rate_hz
         elapsed = 0.0

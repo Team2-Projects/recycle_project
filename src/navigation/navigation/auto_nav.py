@@ -221,7 +221,7 @@ class AutoNav(Node):
                 self.cancel_reason = "OBJECT"
                 self.current_handle.cancel_goal_async()
 
-    # recycle_tracking
+    recycle_tracking
     def launch_recycle_tracking_action(self):
         self.publish_robot_task(
             "OBJECT_PICKUP_START",
@@ -250,6 +250,9 @@ class AutoNav(Node):
         result = future.result().result
 
         if not result.success:
+            self.cancel_reason = "STOP"
+            if self.current_handle is not None:
+                self.current_handle.cancel_goal_async()
             return
 
         self.launch_recycle_action()
@@ -282,6 +285,13 @@ class AutoNav(Node):
         result = future.result().result
 
         if not result.success:
+            if result.message == "STOP":
+                self.get_logger().warn(f'사용자 명령: {result.message}')
+                self.cancel_reason = "STOP"
+                if self.current_handle is not None:
+                    self.current_handle.cancel_goal_async()
+                return
+
             self.get_logger().warn(f'Recycle 실패: {result.message}')
             self.publish_robot_task(
                 "OBJECT_PICKUP_FAIL",

@@ -52,6 +52,21 @@ class RecycleTrackingNode(Node):
             callback_group=self.cb_group
         )
 
+        self.command_sub = self.create_subscription(
+            String,
+            "/navigation_command",
+            self.command_callback,
+            10
+        )
+
+    def command_callback(self, msg):
+        if msg.data == "STOP":
+            goal_handle.abort()
+            result = RecycleActionMsg.Result()
+            result.success = False
+            result.message = '사용자 명령: 취소'
+            return result
+
     def obj_callback(self, msg):
         self.latest_object = msg
 
