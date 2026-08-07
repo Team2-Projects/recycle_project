@@ -105,24 +105,24 @@ class Recycle(Node):
             # self.center_y = request.center_y
 
             self.recycle_point0 = [
-                (-0.35, -0.5),
-                (-0.7, -0.5)
+                (-0.3, -0.5),
+                (-0.75, -0.5)
             ]
             self.recycle_point1 = [
-                (-0.35, -1.0),
-                (-0.7, -1.0)
+                (-0.3, -1.0),
+                (-0.75, -1.0)
             ]
             self.recycle_point2 = [
-                (-0.35, -1.5),
-                (-0.7, -1.5)
+                (-0.3, -1.5),
+                (-0.75, -1.5)
             ]
             self.recycle_point3 = [
-                (-0.35, -2.0),
-                (-0.7, -2.0)
+                (-0.3, -2.0),
+                (-0.75, -2.0)
             ]
             self.recycle_point4 = [
-                (-0.35, -2.5),
-                (-0.7, -2.5)
+                (-0.3, -2.5),
+                (-0.75, -2.5)
             ]
 
             if self.index == 0:
@@ -180,7 +180,7 @@ class Recycle(Node):
             goal_msg = NavigateToPose.Goal()
             goal_msg.pose = pose
 
-            await self._action_client.wait_for_server()
+            self._action_client.wait_for_server()
 
             goal_handle = await self._action_client.send_goal_async(goal_msg)
 
@@ -213,7 +213,7 @@ class Recycle(Node):
         except TransformException:
             return None
 
-    async def move_backward(self, duration: float = 3.0, speed: float = -0.2):
+    async def move_backward(self, duration: float = 3.0, speed: float = -0.1):
         msg = Twist()
         msg.linear.x = speed
         msg.angular.z = 0.0

@@ -121,74 +121,78 @@ controller_server:
     FollowPath:
       plugin: "teb_local_planner::TebLocalPlannerROS"
 
-      # 속도 및 가속도 제약 (모두 double 명시)
-      max_vel_x: 0.5
-      max_vel_x_backwards: 0.05
-      max_vel_y: 0.0
-      max_vel_theta: 1.5
-      acc_lim_x: 2.5
-      acc_lim_y: 0.0
-      acc_lim_theta: 3.2
+      # 최대 속도
+      max_vel_x: 0.10
 
-      # 도달 허용 오차
-      xy_goal_tolerance: 0.05
-      yaw_goal_tolerance: 0.1
+      # 최대 후진 속도
+      max_vel_x_backwards: 0.01
 
-      # 궤적 최적화 설정
-      # teb_autosize 삭제 (C++ 코드상 double/bool 타입 충돌 방지 목적 기본값 사용)
-      dt_ref: 0.3
-      dt_hysteresis: 0.1
-      max_samples: 500
-      global_plan_overwrite_orientation: true
-      allow_init_with_backwards_motion: false
-      max_global_plan_lookahead_dist: 3.0
-      global_plan_viapoint_sep: -0.1
-      global_plan_prune_distance: 1.0
-      exact_arc_length: true
-      feasibility_check_no_poses: 5
-      publish_feedback: false
+      # 최대 회전 속도(rad/s)
+      max_vel_theta: 0.5
 
-      # 장애물 거리 설정
-      min_obstacle_dist: 0.25
-      inflation_dist: 0.6
+      # 가속도 제한
+      acc_lim_x: 0.5
+      acc_lim_theta: 2.5
+
+      footprint_model:
+        type: "polygon"
+        vertices: "[[0.268, -0.14], [0.268, 0.14], [-0.196, 0.14], [-0.196, -0.14]]"
+
+      # 장애물
+      min_obstacle_dist: 0.15
+
+      # 장애물을 조금 더 크게 인식
+      inflation_dist: 0.25
+
+      # Costmap 장애물도 같이 사용
       include_costmap_obstacles: true
-      costmap_obstacles_behind_robot_dist: 1.5
-      obstacle_poses_affected: 15
 
-      # 가중치 (Optimization Weights) - 정수 항목 실수(.0) 변환 완료
-      no_inner_iterations: 5
-      no_outer_iterations: 4
-      optimization_activate: true
-      optimization_verbose: false
-      penalty_epsilon: 0.1
-      obstacle_cost_exponent: 4.0
+      # 경로 점 간격
+      dt_ref: 0.3
+
+      # 허용 오차
+      dt_hysteresis: 0.1
+
+      # 최소/최대 샘플
+      min_samples: 3
+      max_samples: 20
+
+      # 전역 경로 방향을 다시 계산
+      global_plan_overwrite_orientation: true
+
+      # 필요 시 후진 허용
+      allow_init_with_backwards_motion: false
+
+      # 최적화 반복 횟수
+      no_inner_iterations: 3
+      no_outer_iterations: 2
+      
+      #전진 속도 유지
       weight_max_vel_x: 2.0
-      weight_max_vel_theta: 1.0
-      weight_acc_lim_x: 1.0
-      weight_acc_lim_theta: 1.0
-      weight_kinematics_nh: 100.0
-      weight_kinematics_forward_drive: 1.0
-      weight_kinematics_turning_radius: 1.0
-      weight_optimaltime: 1.0
-      weight_shortest_path: 0.0
-      weight_obstacle: 100.0
-      weight_inflation: 0.2
-      weight_dynamic_obstacle: 10.0
-      weight_viapoint: 1.0
 
-      # 호모토피 클래스 (우회 경로 다중 탐색)
-      enable_homotopy_class_planning: true
+      # 장애물 비용
+      weight_obstacle: 50.0
+      weight_inflation: 0.2
+
+      # 시간 최적화
+      weight_optimaltime: 1.0
+      weight_shortest_path: 1.0
+
+      # # 회전 반경 비용
+      # weight_kinematics_turning_radius: 1.0
+
+      # 전진 주행 선호
+      weight_kinematics_forward_drive: 50.0 
+
+      # 여러 경로를 동시에 탐색
+      enable_homotopy_class_planning: false
       enable_multithreading: true
-      max_number_classes: 4
-      selection_cost_hysteresis: 1.0
-      selection_prefer_initial_plan: 0.95
-      roadmap_graph_no_samples: 15
-      roadmap_graph_area_width: 5.0
-      roadmap_graph_area_length_scale: 1.0
-      h_signature_prescaler: 0.5
-      h_signature_threshold: 0.1
-      obstacle_heading_threshold: 0.45
-      switching_blocking_period: 0.0
+
+      # 후보 경로 개수
+      max_number_classes: 2
+
+      # 목표 근처에서 속도 감소
+      free_goal_vel: false
 
 controller_server_rclcpp_node:
   ros__parameters:
@@ -205,13 +209,13 @@ local_costmap:
       rolling_window: true
       width: 3
       height: 3
-      resolution: 0.02
+      resolution: 0.05
       footprint: "[[0.268, -0.14], [0.268, 0.14], [-0.196, 0.14], [-0.196, -0.14]]"
       footprint_padding: 0.005
-      plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
+      plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.05
+        inflation_radius: 0.15
         cost_scaling_factor: 15.0
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -224,26 +228,6 @@ local_costmap:
           clearing: true
           marking: true
           data_type: "LaserScan"
-      voxel_layer:
-        plugin: "nav2_costmap_2d::VoxelLayer"
-        enabled: true
-        publish_voxel_map: true
-        origin_z: 0.0
-        z_resolution: 0.05
-        z_voxels: 16
-        max_obstacle_height: 2.0
-        mark_threshold: 0
-        observation_sources: scan
-        scan:
-          topic: /scan
-          max_obstacle_height: 2.0
-          clearing: true
-          marking: true
-          data_type: "LaserScan"
-          raytrace_max_range: 3.0
-          raytrace_min_range: 0.0
-          obstacle_max_range: 0.2
-          obstacle_min_range: 0.0
       static_layer:
         map_subscribe_transient_local: true
       always_send_full_costmap: true
@@ -270,7 +254,7 @@ global_costmap:
       track_unknown_space: true
       always_send_full_costmap: true
       
-      # 1. 글로벌 코스트맵 레이어 구성 (voxel_layer 제거하여 정적 지도+동적 장애물에 집중)
+      
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       
       static_layer:
@@ -291,14 +275,14 @@ global_costmap:
           data_type: "LaserScan"
           raytrace_max_range: 3.0
           raytrace_min_range: 0.0
-          # [수정 1] 기존 2.5m -> 1.5m로 변경 (장애물/벽 감지 거리 단축)
-          obstacle_max_range: 0.2
+          
+          obstacle_max_range: 2.0
           obstacle_min_range: 0.0
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # [수정 2] 기존 0.55m -> 0.35m로 변경 (벽 주변의 팽창 감지 영역 축소)
-        inflation_radius: 0.05
+        inflation_radius: 0.15
         # [수정 3] 기존 5.0 -> 10.0으로 변경 (비용 감쇄 곡선을 가파르게 만들어 벽에 더 가깝게 밀착 유도)
         cost_scaling_factor: 1.0
 
@@ -334,7 +318,6 @@ planner_server:
       max_iterations: 1000000
       cost_penalty: 30.0
       cost_travel_multiplier: 5.0
-      use_non_monotonic_search: true
       use_final_approach_orientation: true
       max_planning_time: 2.0
 

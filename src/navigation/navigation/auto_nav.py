@@ -15,7 +15,7 @@ import time
 import math
 import json
 
-from my_yolo_cpp_pkg import detected_object_id
+from my_yolo_msgs.msg import DetectedObject
 from .nav_utils import normalize_angle, get_yaw_from_quaternion
 from rcl_interfaces.srv import SetParameters
 from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
@@ -70,7 +70,7 @@ class AutoNav(Node):
         self.create_subscription(Path, '/coverage_path', self.path_callback, latched_qos)
         
         self.object_sub = self.create_subscription(
-            detected_object_id.DetectedObject,
+            DetectedObject,
             '/classified_detected_object_info',
             self.object_callback,
             10

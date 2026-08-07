@@ -26,7 +26,7 @@ class RecycleTrackingNode(Node):
 
         self.sub = self.create_subscription(
             DetectedObject,
-            '/detected_object_info',
+            '/classified_detected_object_info',
             self.obj_callback,
             10,
             callback_group=self.cb_group)
@@ -41,8 +41,8 @@ class RecycleTrackingNode(Node):
             'set_tracking_mode',
             callback_group=self.cb_group)
 
-        while not self.tracking_cli.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info("Tracking Service 기다리는 중...")
+        # while not self.tracking_cli.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info("Tracking Service 기다리는 중...")
 
         self._action_server = ActionServer(
             self,
