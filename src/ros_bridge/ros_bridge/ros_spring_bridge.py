@@ -65,15 +65,15 @@ class SpringBridge(Node):
         )
 
         # camera
-        self.last_camera_time = 0
         camera_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=1
         )
+
         self.create_subscription(
             CompressedImage,
-            "/image_raw/compressed",
+            "/yolo/image/compressed",
             self.camera_callback,
             camera_qos
         )
@@ -208,11 +208,10 @@ class SpringBridge(Node):
 
     def camera_callback(self, msg):
         try:
-            now = time.time()
-            if now - self.last_camera_time < 0.2:
-                return
-            self.last_camera_time = now
-            self.ws.send(msg.data, opcode=websocket.ABNF.OPCODE_BINARY)
+            self.ws.send(
+                msg.data,
+                opcode=websocket.ABNF.OPCODE_BINARY
+            )
 
         except Exception as e:
             self.get_logger().error(

@@ -9,6 +9,12 @@ from my_yolo_msgs.srv import SetTracking
 import time
 import openvino as ov  # OpenVINO 라이브러리 임포트
 
+from rclpy.qos import (
+    QoSProfile,
+    ReliabilityPolicy,
+    HistoryPolicy
+)
+
 # 변환된 OpenVINO 모델 xml 파일 경로
 model_path = '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/classify_model_openvino/classify_model.xml'
 object_id = {'can': 0, 'paper': 1, 'plastic': 2}
@@ -33,8 +39,6 @@ class YoloNode(Node):
         self.input_key = self.compiled_classify_model.input(0)
         self.output_key = self.compiled_classify_model.output(0)
         
-        self.processing_times = []
-        
         self.subscription = self.create_subscription(
             CompressedImage, '/image_raw/compressed', self.listener_callback, 10)
         self.publisher_ = self.create_publisher(DetectedObject, '/classified_detected_object_info', 10)
@@ -43,6 +47,43 @@ class YoloNode(Node):
 
         self.target_idx = 0;
         self.pred_class = 0;
+
+        # 웹으로 이미지 전달
+        self.last_image_publish_time = 0.0
+
+        image_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        self.image_pub = self.create_publisher(
+            CompressedImage,
+            '/yolo/image/compressed',
+            image_qos
+        )
+
+    def publish_image(self, frame):
+        now = time.time()
+
+        if now - self.last_image_publish_time < 0.2:
+            return
+
+        self.last_image_publish_time = now
+
+        success, encoded = cv2.imencode(
+            '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70]
+        )
+
+        if not success:
+            return
+
+        msg = CompressedImage()
+        msg.format = 'jpeg'
+        msg.data = encoded.tobytes()
+
+        self.image_pub.publish(msg)
+
     def srv_callback(self, request, response):
         self.is_tracking = request.enable
         self.get_logger().info(f"🚀 추적 모드 변경: {self.is_tracking}")
@@ -80,7 +121,6 @@ class YoloNode(Node):
             msg_data.id = -1
             msg_data.confidence = 0.0
             msg_data.coord = [0.0, 0.0, 0.0, 0.0]
-            self.publisher_.publish(msg_data)
         if self.pred_class != 3:
             results = self.model.predict(source=frame, imgsz=640, conf=conf_val, verbose=False)
             res = results[0]
@@ -100,6 +140,18 @@ class YoloNode(Node):
                     msg_data.id = object_id[best_name]
                     msg_data.confidence = confidences[self.target_idx]
                     msg_data.coord = [float(x) for x in best_coord]
+
+                    x,y,w,h = best_coord
+                    pt1_x = int(x - (w/2))
+                    pt1_y = int(y - (h/2))
+                    pt2_x = int(x + (w/2))
+                    pt2_y = int(y + (h/2))
+
+                    org_x = pt1_x - 5
+                    org_y = pt1_y - 5
+                    
+                    cv2.rectangle(frame, (pt1_x, pt1_y), (pt2_x, pt2_y), (0, 40, 200), 3)
+                    cv2.putText(frame, best_name, (org_x, org_y), cv2.FONT_HERSHEY_SIMPLEX, fontScale = 2, thickness = 3, color = (255, 0, 0))
                 else:
                     msg_data.id = -1
                     msg_data.confidence = 0.0
@@ -110,22 +162,7 @@ class YoloNode(Node):
                 msg_data.coord = [0.0, 0.0, 0.0, 0.0]
 
         self.publisher_.publish(msg_data)
-
-        end_time = time.time()
-        elapsed_time = end_time - start_time
-        self.processing_times.append(elapsed_time)
-
-        current_count = len(self.processing_times)
-
-        if current_count % 10 == 0:
-            total_elapsed = sum(self.processing_times)
-            avg_time = total_elapsed / current_count
-            fps = 1.0 / avg_time if avg_time > 0 else 0.0
-            self.get_logger().info('pred_class = {}'.format(self.pred_class))
-            self.get_logger().info(
-                f"📊 [누적 {current_count}개] 총 소요 시간: {total_elapsed:.2f}초 | "
-                f"평균 처리 시간: {avg_time * 1000:.2f}ms | 평균 FPS: {fps:.2f}"
-            )
+        self.publish_image(frame)
 
 def main(args=None):
     rclpy.init(args=args)
