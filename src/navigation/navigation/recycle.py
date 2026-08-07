@@ -48,21 +48,6 @@ class Recycle(Node):
 
         self.warmup()
 
-        self.command_sub = self.create_subscription(
-            String,
-            "/navigation_command",
-            self.command_callback,
-            10
-        )
-
-    def command_callback(self, msg):
-        if msg.data == "STOP":
-            goal_handle.abort()
-            result = RecycleActionMsg.Result()
-            result.success = False
-            result.message = "STOP"
-            return result
-
     def warmup(self):
         start_time = self.get_clock().now()
         while (self.get_clock().now() - start_time).nanoseconds < 1.0e9:

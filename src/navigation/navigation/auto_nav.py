@@ -56,6 +56,8 @@ class AutoNav(Node):
         self.resume_x = None
         self.resume_y = None
         self.current_handle = None
+        self.tracking_handle = None
+        self.recycle_handle = None
         self.is_resuming = False  
 
         self.going_home = False  
@@ -146,10 +148,21 @@ class AutoNav(Node):
         self.robot_task_pub.publish(msg)
 
     def command_callback(self, msg):
-        if msg.data == "STOP":
-            self.cancel_reason = "STOP"
-            if self.current_handle is not None:
-                self.current_handle.cancel_goal_async()
+        if msg.data != "STOP":
+            return
+
+        self.cancel_reason = "STOP"
+
+        if self.tracking_handle is not None:
+            self.tracking_handle.cancel_goal_async()
+            return
+
+        if self.recycle_handle is not None:
+            self.recycle_handle.cancel_goal_async()
+            return
+
+        if self.current_handle is not None:
+            self.current_handle.cancel_goal_async()
 
     def get_current_yaw(self):
         try:
@@ -221,7 +234,6 @@ class AutoNav(Node):
                 self.cancel_reason = "OBJECT"
                 self.current_handle.cancel_goal_async()
 
-    recycle_tracking
     def launch_recycle_tracking_action(self):
         self.publish_robot_task(
             "OBJECT_PICKUP_START",
@@ -242,6 +254,8 @@ class AutoNav(Node):
         if not goal_handle.accepted:
             self.send_goal(self.resume_x, self.resume_y)
             return
+
+        self.tracking_handle = goal_handle
 
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self.recycle_tracking_result_callback)
@@ -277,6 +291,8 @@ class AutoNav(Node):
             self.get_logger().error('❌ recycle 목표 거절됨')
             self.object_found = False
             return
+
+        self.recycle_handle = goal_handle
 
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self.recycle_result_callback)

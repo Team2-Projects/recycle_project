@@ -41,9 +41,6 @@ class RecycleTrackingNode(Node):
             'set_tracking_mode',
             callback_group=self.cb_group)
 
-        # while not self.tracking_cli.wait_for_service(timeout_sec=1.0):
-        #     self.get_logger().info("Tracking Service 기다리는 중...")
-
         self._action_server = ActionServer(
             self,
             RecycleActionMsg,
@@ -51,21 +48,6 @@ class RecycleTrackingNode(Node):
             execute_callback=self.execute_callback,
             callback_group=self.cb_group
         )
-
-        self.command_sub = self.create_subscription(
-            String,
-            "/navigation_command",
-            self.command_callback,
-            10
-        )
-
-    def command_callback(self, msg):
-        if msg.data == "STOP":
-            goal_handle.abort()
-            result = RecycleActionMsg.Result()
-            result.success = False
-            result.message = '사용자 명령: 취소'
-            return result
 
     def obj_callback(self, msg):
         self.latest_object = msg
