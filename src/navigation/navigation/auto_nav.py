@@ -205,6 +205,11 @@ class AutoNav(Node):
         self.is_resuming = False
         self.is_returning_home = True
 
+        self.publish_object_found(
+            "-",
+            "-"
+        )
+
         self.publish_robot_state(
             'state',
             'Return Home'

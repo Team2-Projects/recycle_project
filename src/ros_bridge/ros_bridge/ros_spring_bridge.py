@@ -62,6 +62,14 @@ class SpringBridge(Node):
             10
         )
 
+        # recycle_success
+        self.create_subscription(
+            String,
+            "recycle_success",
+            self.recycle_success_callback,
+            10
+        )
+
         # camera
         camera_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -202,6 +210,17 @@ class SpringBridge(Node):
         except Exception as e:
             self.get_logger().error(
                 f"object error: {e}"
+            )
+
+    def recycle_success_callback(self, msg):
+        try:
+            event = json.loads(msg.data)
+            event["type"] = "recycleHistory"
+            self.send_ws(event)
+
+        except Exception as e:
+            self.get_logger().error(
+                f"recycle_success error: {e}"
             )
 
     def camera_callback(self, msg):
