@@ -12,6 +12,7 @@ from geometry_msgs.msg import Twist
 from my_yolo_msgs.msg import DetectedObject
 from my_yolo_msgs.srv import SetTracking
 from navigation_interface.action import RecycleActionMsg
+from std_msgs.msg import String
 import math
 
 class RecycleTrackingNode(Node):

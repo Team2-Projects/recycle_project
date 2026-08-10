@@ -42,7 +42,8 @@ class AutoNav(Node):
 
         self.is_running = False
         self.object_found = False
-        self.objcet_id = None
+        self.object_id = None
+        self.object_msg = None
         self.coord = None
         self.home_x = None
         self.home_y = None
@@ -118,6 +119,21 @@ class AutoNav(Node):
             "",
             "Task"
         )
+
+        self.recycle_success_pub = self.create_publisher(
+            String,
+            "/recycle_success",
+            10
+        )
+
+    def publish_recycle_success(self, object_name, confidence):
+        msg = String()
+        msg.data = json.dumps({
+            "object_name": object_name,
+            "confidence": confidence,
+            "status": "Success"
+        })
+        self.recycle_success_pub.publish(msg)
 
     def publish_object_found(self, object_name, confidence):
         msg = String()
@@ -241,6 +257,8 @@ class AutoNav(Node):
                 f"{msg.confidence:.2f}"
             )
 
+            self.object_msg = msg
+
             self.publish_robot_task(
                 "OBJECT_DETECTED",
                 "물체 감지",
@@ -251,7 +269,7 @@ class AutoNav(Node):
             self.target_x = float(msg.coord[0])
             self.target_y = float(msg.coord[1])
             self.target_h = float(msg.coord[3])
-            self.objcet_id = msg.id
+            self.object_id = msg.id
 
             # 재개용 원래 목표 저장
             if self.current_idx < len(self.waypoints):
@@ -314,7 +332,7 @@ class AutoNav(Node):
     # recycle
     def launch_recycle_action(self):
         goal_msg = RecycleActionMsg.Goal()
-        goal_msg.index = self.objcet_id if self.objcet_id is not None else 1
+        goal_msg.index = self.object_id if self.object_id is not None else 1
         goal_msg.current_idx = self.current_idx
         goal_msg.home_x = self.home_x
         goal_msg.home_y = self.home_y
@@ -358,6 +376,12 @@ class AutoNav(Node):
 
             self.object_found = False
             return
+        
+        # DB저장용 데이터 넘김
+        self.publish_recycle_success(
+            object_name.get(self.object_msg.id, '-'),
+            f"{self.object_msg.confidence:.2f}"
+        )
 
         self.publish_robot_task(
             "OBJECT_PICKUP_SUCCESS",
@@ -373,6 +397,8 @@ class AutoNav(Node):
         )
 
         self.object_found = False
+
+        self.object_msg = None
         
         self.is_resuming = True
         self.get_logger().info(f'↩️ 원래 목표로 복귀 시작')

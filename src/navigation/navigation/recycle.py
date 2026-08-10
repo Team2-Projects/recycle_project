@@ -17,7 +17,7 @@ from navigation_interface.action import RecycleActionMsg
 from .nav_utils import normalize_angle, get_yaw_from_quaternion
 
 from action_msgs.msg import GoalStatus
-
+from std_msgs.msg import String
 
 class Recycle(Node):
     def __init__(self):
@@ -49,20 +49,6 @@ class Recycle(Node):
         self._tick_waiters = []   # list of (target_time, future)
         self._tick_timer = self.create_timer(self._tick_period, self._on_tick, callback_group=self.cb_group)
 
-        self.recycle_success_pub = self.create_publisher(
-            String,
-            "/recycle_success",
-            10
-        )
-
-    def publish_recycle_success(self, object_name, confidence):
-        msg = String()
-        msg.data = json.dumps({
-            "object_name": object_name,
-            "confidence": confidence,
-            "status": "Success"
-        })
-        self.recycle_success_pub.publish(msg)
 
     def cancel_callback(self, goal_handle):
         self.get_logger().warn("🛑 Recycle Action cancel 요청 수신")
@@ -170,11 +156,6 @@ class Recycle(Node):
                     goal_handle.abort()
                     return result
 
-            # DB저장용 데이터 넘김
-            self.publish_recycle_success(
-                object_name.get(msg.id, '-'),
-                f"{msg.confidence:.2f}"
-            )
 
             # 후진
             success = await self.move_backward(goal_handle)
