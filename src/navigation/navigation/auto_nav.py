@@ -49,7 +49,6 @@ class AutoNav(Node):
         self.center_x = None
         self.center_y = None
 
-        self.flag = False
         self.cancel_reason = None
         self.is_returning_home = False
 
@@ -154,15 +153,21 @@ class AutoNav(Node):
         self.cancel_reason = "STOP"
 
         if self.tracking_handle is not None:
+            self.get_logger().info('Tracking Action 취소 요청')
             self.tracking_handle.cancel_goal_async()
             return
 
         if self.recycle_handle is not None:
+            self.get_logger().info('Recycle Action 취소 요청')
             self.recycle_handle.cancel_goal_async()
             return
 
         if self.current_handle is not None:
+            self.get_logger().info('NavigateToPose 취소 요청')
             self.current_handle.cancel_goal_async()
+            return
+
+        self.get_logger().warn('현재 취소할 Action이 없습니다.')
 
     def get_current_yaw(self):
         try:
@@ -194,6 +199,28 @@ class AutoNav(Node):
         self.get_logger().info(f'Received {len(self.waypoints)} waypoints')
         self.send_next_goal()
 
+    def return_home_by_stop(self):
+        self.cancel_reason = None
+        self.object_found = False
+        self.is_resuming = False
+        self.is_returning_home = True
+
+        self.publish_robot_state(
+            'state',
+            'Return Home'
+        )
+
+        self.publish_robot_task(
+            'USER_COMMAND',
+            '사용자 명령',
+            '순찰 종료',
+            'Task'
+        )
+
+        self.get_logger().info('사용자 STOP → HOME 복귀')
+
+        self.send_goal(self.home_x, self.home_y)
+    
     def object_callback(self, msg):
         if self.object_found:
             return
@@ -261,12 +288,20 @@ class AutoNav(Node):
         result_future.add_done_callback(self.recycle_tracking_result_callback)
 
     def recycle_tracking_result_callback(self, future):
-        result = future.result().result
+        response = future.result()
+        status = response.status
+        result = response.result
+
+        self.tracking_handle = None
+
+        if status == GoalStatus.STATUS_CANCELED:
+            self.return_home_by_stop()
+            return
 
         if not result.success:
-            self.cancel_reason = "STOP"
-            if self.current_handle is not None:
-                self.current_handle.cancel_goal_async()
+            self.get_logger().warn(f'Tracking 실패: {result.message}')
+            self.object_found = False
+            self.send_goal(self.resume_x, self.resume_y)
             return
 
         self.launch_recycle_action()
@@ -278,8 +313,6 @@ class AutoNav(Node):
         goal_msg.current_idx = self.current_idx
         goal_msg.home_x = self.home_x
         goal_msg.home_y = self.home_y
-        # goal_msg.center_x = self.center_x
-        # goal_msg.center_y = self.center_y
 
         self.get_logger().info('🚀 recycle_action 호출 (HOME 이동 + 후진 + 회전)')
         future = self._recycle_client.send_goal_async(goal_msg)
@@ -298,23 +331,26 @@ class AutoNav(Node):
         result_future.add_done_callback(self.recycle_result_callback)
 
     def recycle_result_callback(self, future):
-        result = future.result().result
+        response = future.result()
+        status = response.status
+        result = response.result
+
+        self.recycle_handle = None
+
+        if status == GoalStatus.STATUS_CANCELED:
+            self.return_home_by_stop()
+            return
 
         if not result.success:
-            if result.message == "STOP":
-                self.get_logger().warn(f'사용자 명령: {result.message}')
-                self.cancel_reason = "STOP"
-                if self.current_handle is not None:
-                    self.current_handle.cancel_goal_async()
-                return
-
             self.get_logger().warn(f'Recycle 실패: {result.message}')
+
             self.publish_robot_task(
-                "OBJECT_PICKUP_FAIL",
-                "분리수거 실패",
-                "",
-                "Error"
+                'OBJECT_PICKUP_FAIL',
+                '분리수거 실패',
+                '',
+                'Error'
             )
+
             self.object_found = False
             return
 
@@ -335,11 +371,6 @@ class AutoNav(Node):
         
         self.is_resuming = True
         self.get_logger().info(f'↩️ 원래 목표로 복귀 시작')
-        # if self.current_idx in (3, 4):
-        #     self.send_goal(self.center_x, self.center_y)
-        #     self.flag = True
-        # else:
-        #     self.send_goal(self.resume_x, self.resume_y)
         self.send_goal(self.resume_x, self.resume_y)
 
     def send_next_goal(self):
@@ -393,7 +424,11 @@ class AutoNav(Node):
         goal_handle.get_result_async().add_done_callback(self.result_callback)
 
     def result_callback(self, future):
-        status = future.result().status
+        response = future.result()
+        status = response.status
+
+        self.current_handle = None
+
         if status == GoalStatus.STATUS_SUCCEEDED:
             if self.is_returning_home:
                 self.publish_robot_state(
@@ -406,32 +441,18 @@ class AutoNav(Node):
                     "",
                     "Task"
                 )
+                self.get_logger().info('HOME 복귀 완료')
                 self.destroy_node()
                 rclpy.shutdown()
                 return
+
         if status == GoalStatus.STATUS_CANCELED:
             if self.cancel_reason == "STOP":
-                self.cancel_reason = None
-                self.is_returning_home = True
-                self.publish_robot_state(
-                    "state",
-                    "Return Home"
-                )
-                self.publish_robot_task(
-                    "USER_COMMAND",
-                    "사용자 명령",
-                    "순찰 종료",
-                    "Task"
-                )
-                self.send_goal(
-                    self.home_x,
-                    self.home_y
-                )
+                self.return_home_by_stop()
                 return
-            if self.cancel_reason == "OBJECT":
-                if self.object_found:
-                    self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
-                    self.launch_recycle_tracking_action()
+            if self.cancel_reason == "OBJECT" and self.object_found:
+                self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
+                self.launch_recycle_tracking_action()
             return
 
         if status == GoalStatus.STATUS_ABORTED:
@@ -445,13 +466,6 @@ class AutoNav(Node):
         else:
             x, y = self.waypoints[self.current_idx]
             self.get_logger().info(f'✅ Reached ({x:.2f}, {y:.2f})')
-            
-        # if self.flag:
-        #     self.flag = False
-        #     self.send_goal(self.resume_x, self.resume_y)
-        # else:
-        #     self.current_idx += 1
-        #     self.send_next_goal()
 
         self.current_idx += 1
         self.send_next_goal()

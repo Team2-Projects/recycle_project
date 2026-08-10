@@ -3,9 +3,9 @@ from threading import Event
 
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.action import ActionServer, CancelResponse
 
 from geometry_msgs.msg import Twist
 
@@ -46,6 +46,7 @@ class RecycleTrackingNode(Node):
             RecycleActionMsg,
             "recycle_tracking_action",
             execute_callback=self.execute_callback,
+            cancel_callback=self.cancel_callback,
             callback_group=self.cb_group
         )
 
@@ -89,8 +90,20 @@ class RecycleTrackingNode(Node):
             return result
 
         self.get_logger().info("정렬(Align) 단계 진입")
-        if not self.align_robot(goal_handle.request.target_x):
+        if not self.align_robot(goal_handle, goal_handle.request.target_x):
             self.call_tracking_srv(False)
+            self.cmd_vel_pub.publish(Twist())
+
+            # 사용자 STOP으로 취소된 경우
+            if goal_handle.is_cancel_requested:
+                self.get_logger().warn("Tracking Action canceled")
+                goal_handle.canceled()
+                result = RecycleActionMsg.Result()
+                result.success = False
+                result.message = "STOP"
+
+                return result
+
             goal_handle.abort()
             result = RecycleActionMsg.Result()
             result.success = False
@@ -100,6 +113,15 @@ class RecycleTrackingNode(Node):
         self.get_logger().info("접근(Approach) 단계 진입")
         if not self.approach_robot(goal_handle):
             self.call_tracking_srv(False)
+            self.cmd_vel_pub.publish(Twist())
+            if goal_handle.is_cancel_requested:
+                self.get_logger().warn("Tracking Action canceled")
+                goal_handle.canceled()
+                result = RecycleActionMsg.Result()
+                result.success = False
+                result.message = "STOP"
+                return result
+
             goal_handle.abort()
             result = RecycleActionMsg.Result()
             result.success = False
@@ -116,6 +138,10 @@ class RecycleTrackingNode(Node):
         result.success = True
         result.message = '정렬 및 접근 완료'
         return result
+
+    def cancel_callback(self, goal_handle):
+        self.get_logger().warn("🛑 Tracking cancel 요청 수신")
+        return CancelResponse.ACCEPT
 
 
     # # def align_robot(self, target_x):
@@ -147,11 +173,17 @@ class RecycleTrackingNode(Node):
     #     return True
 
     #     실시간 데이터를 사용하므로 conf를 0.2-3정도의 낮은 값으로 맞추세요.
-    def align_robot(self, target_x): # target_w는 초기값일 뿐, 루프에선 쓰지 마세요
+    def align_robot(self, goal_handle, target_x): # target_w는 초기값일 뿐, 루프에선 쓰지 마세요
         self.get_logger().info("물체 정렬 루프 시작...")
     
         self.get_logger().info(f"target_x: {target_x:.2f}")
         while rclpy.ok():
+            if goal_handle.is_cancel_requested:
+                self.get_logger().warn("🛑 정렬 중 Tracking 취소")
+
+                self.cmd_vel_pub.publish(Twist())
+                return False
+
             # 1. 실시간으로 최신 데이터 가져오기 (매우 중요!)
             if self.latest_object is None:
                 init_diff = 320 - target_x
@@ -213,7 +245,8 @@ class RecycleTrackingNode(Node):
                 # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
 
         if abs(diff) >= 20:
-            self.align_robot(target_x)
+            if not self.align_robot(goal_handle, target_x):
+                return False    
 
         
 
@@ -226,6 +259,12 @@ class RecycleTrackingNode(Node):
         #     time.sleep(0.05)
         last_approach_time = 3.0
         while rclpy.ok():
+            if goal_handle.is_cancel_requested:
+                self.get_logger().warn("🛑 접근 중 Tracking 취소")
+
+                self.cmd_vel_pub.publish(Twist())
+                return False
+
             if self.latest_object is None:
                 # 감지를 못할때는 정말 천천히 움직이면서 물체를 감지하도록 한다.
                 slow_motion = 0.02
