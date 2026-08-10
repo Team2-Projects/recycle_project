@@ -201,7 +201,7 @@ class AutoNav(Node):
 
     def return_home_by_stop(self):
         self.cancel_reason = None
-        self.object_found = False
+        self.object_found = True
         self.is_resuming = False
         self.is_returning_home = True
 

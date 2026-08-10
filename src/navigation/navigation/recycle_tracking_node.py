@@ -19,6 +19,8 @@ class RecycleTrackingNode(Node):
     def __init__(self):
         super().__init__('recycle_tracking_node')
 
+        self.cancel_event = Event()
+        
         self.cb_group = ReentrantCallbackGroup()
 
         self.latest_object = None
@@ -81,6 +83,8 @@ class RecycleTrackingNode(Node):
     def execute_callback(self, goal_handle):
 
         self.get_logger().info("Recycle Tracking 시작")
+
+        self.cancel_event.clear()
 
         if not self.call_tracking_srv(True):
             goal_handle.abort()
@@ -152,15 +156,20 @@ class RecycleTrackingNode(Node):
 
     def cancel_callback(self, goal_handle):
         self.get_logger().warn("🛑 Tracking cancel 요청 수신")
+        self.cancel_event.set()
         self.cmd_vel_pub.publish(Twist())
         return CancelResponse.ACCEPT
 
-    def move_forward_with_cancel(self, goal_handle, duratself.align_robot(...):
-ion, speed):
+    def move_forward_with_cancel(self, goal_handle, duration, speed):
         start = time.time()
 
         while time.time() - start < duration:
 
+            if self.cancel_event.is_set() or goal_handle.is_cancel_requested:
+                self.get_logger().warn("🛑 MOVE 강제 종료")
+                self.cmd_vel_pub.publish(Twist())
+                return False
+                
             if goal_handle.is_cancel_requested:
                 self.cmd_vel_pub.publish(Twist())
                 return False
@@ -207,9 +216,15 @@ ion, speed):
     #     실시간 데이터를 사용하므로 conf를 0.2-3정도의 낮은 값으로 맞추세요.
     def align_robot(self, goal_handle, target_x): # target_w는 초기값일 뿐, 루프에선 쓰지 마세요
         self.get_logger().info("물체 정렬 루프 시작...")
-    
+        
         self.get_logger().info(f"target_x: {target_x:.2f}")
         while rclpy.ok():
+
+            if self.cancel_event.is_set() or goal_handle.is_cancel_requested:
+                self.get_logger().warn("🛑 ALIGN 강제 종료")
+                self.cmd_vel_pub.publish(Twist())
+                return False
+
             if goal_handle.is_cancel_requested:
                 self.get_logger().warn("🛑 정렬 중 Tracking 취소")
 
@@ -291,6 +306,10 @@ ion, speed):
         #     time.sleep(0.05)
         last_approach_time = 3.0
         while rclpy.ok():
+            if self.cancel_event.is_set() or goal_handle.is_cancel_requested:
+                self.get_logger().warn("🛑 APPROACH 강제 종료")
+                self.cmd_vel_pub.publish(Twist())
+                return False
             if goal_handle.is_cancel_requested:
                 self.get_logger().warn("🛑 접근 중 Tracking 취소")
 
