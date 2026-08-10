@@ -11,12 +11,10 @@ from rclpy.qos import (
     HistoryPolicy
 )
 
-from my_yolo_cpp_pkg import detected_object_id
-
 import websocket
 import json
 import math
-import psutil  # CPU 사용량 측정을 위한 패키지 추가
+import psutil 
 import time
 
 object_name = {0: 'can', 1: 'paper', 2: 'plastic'}

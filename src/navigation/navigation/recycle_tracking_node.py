@@ -91,7 +91,6 @@ class RecycleTrackingNode(Node):
 
         self.get_logger().info("정렬(Align) 단계 진입")
         if not self.align_robot(goal_handle, goal_handle.request.target_x):
-            self.call_tracking_srv(False)
             self.cmd_vel_pub.publish(Twist())
 
             # 사용자 STOP으로 취소된 경우
@@ -103,6 +102,8 @@ class RecycleTrackingNode(Node):
                 result.message = "STOP"
 
                 return result
+
+            self.call_tracking_srv(False)
 
             goal_handle.abort()
             result = RecycleActionMsg.Result()
@@ -130,6 +131,16 @@ class RecycleTrackingNode(Node):
 
         self.call_tracking_srv(False)
 
+        if goal_handle.is_cancel_requested:
+            self.get_logger().warn("🛑 Tracking 완료 직전 취소")
+
+            goal_handle.canceled()
+
+            result = RecycleActionMsg.Result()
+            result.success = False
+            result.message = "STOP"
+            return result
+
         goal_handle.succeed()
 
         self.get_logger().info("Recycle Tracking 완료")
@@ -141,7 +152,28 @@ class RecycleTrackingNode(Node):
 
     def cancel_callback(self, goal_handle):
         self.get_logger().warn("🛑 Tracking cancel 요청 수신")
+        self.cmd_vel_pub.publish(Twist())
         return CancelResponse.ACCEPT
+
+    def move_forward_with_cancel(self, goal_handle, duratself.align_robot(...):
+ion, speed):
+        start = time.time()
+
+        while time.time() - start < duration:
+
+            if goal_handle.is_cancel_requested:
+                self.cmd_vel_pub.publish(Twist())
+                return False
+
+            msg = Twist()
+            msg.linear.x = speed
+            self.cmd_vel_pub.publish(msg)
+
+            time.sleep(0.05)
+
+        self.cmd_vel_pub.publish(Twist())
+
+        return True
 
 
     # # def align_robot(self, target_x):
@@ -283,23 +315,35 @@ class RecycleTrackingNode(Node):
             lower_y = current_y + (current_h/2)
             # self.get_logger().info("박스 위 y좌표 = {}".format(lower_y))            
 
-            if lower_y >= 430:
-                msg = Twist()
-                msg.linear.x = velocity
+            # if lower_y >= 430:
+                # msg = Twist()
+                # msg.linear.x = velocity
 
-                ## 아래 두 줄은 0.10(velocity)m/s로 probe_duration(1초)동안 움직여라.
-                self.cmd_vel_pub.publish(msg)
-                time.sleep(last_approach_time)
+                # ## 아래 두 줄은 0.10(velocity)m/s로 probe_duration(1초)동안 움직여라.
+                # self.cmd_vel_pub.publish(msg)
+                # time.sleep(last_approach_time)
+                # break
+
+            if lower_y >= 430:
+                if not self.move_forward_with_cancel(
+                    goal_handle, last_approach_time, velocity
+                ):
+                    return False
+
                 break
 
             msg = Twist()
             msg.linear.x = velocity
 
                 ## 아래 두 줄은 0.10(velocity)m/s로 probe_duration(1초)동안 움직여라.
-            self.cmd_vel_pub.publish(msg)
-            time.sleep(probe_duration)
+            # self.cmd_vel_pub.publish(msg)
+            # time.sleep(probe_duration)
                 
 
+            if not self.move_forward_with_cancel(
+                goal_handle, probe_duration, velocity
+            ):
+                return False
             self.cmd_vel_pub.publish(Twist())
 
 
