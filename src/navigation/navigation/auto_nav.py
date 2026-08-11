@@ -488,7 +488,7 @@ class AutoNav(Node):
                 return
 
         if status == GoalStatus.STATUS_CANCELED:
-            if self.cancel_reason == "STOP":
+            if self.cancel_reason == "STOP" or self.cancel_reason == "BATTERY_LOW":
                 self.return_home_by_stop()
                 return
             if self.cancel_reason == "OBJECT" and self.object_found:
