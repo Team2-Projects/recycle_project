@@ -167,15 +167,6 @@ class SpringBridge(Node):
             })
             self.battery_low_pub.publish(msg)
 
-            status_msg = String()
-            status_msg.data = json.dumps({
-                "eventType": "BATTERY_LOW",
-                "message": "배터리 경고",
-                "note": "배터리가 30% 이하",
-                "status": "WARNING"
-            })
-            self.robot_task_callback(status_msg)
-
             self.battery_low_alerted = True
 
         elif self.last_sent_battery > 30:

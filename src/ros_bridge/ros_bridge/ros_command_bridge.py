@@ -116,7 +116,10 @@ class CommandBridge(Node):
         self.cancel_pub.publish(msg)
 
     def battery_callback(self, msg):
-        self.stop_navigation()
+        msg = String()
+        msg.data = "BATTERY_LOW"
+
+        self.cancel_pub.publish(msg)
 
 
 def main():

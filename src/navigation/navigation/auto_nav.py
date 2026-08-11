@@ -163,10 +163,12 @@ class AutoNav(Node):
         self.robot_task_pub.publish(msg)
 
     def command_callback(self, msg):
-        if msg.data != "STOP":
+        if msg.data == "STOP":
+            self.cancel_reason = "STOP"
+        elif msg.data == "BATTERY_LOW":
+            self.cancel_reason = "BATTERY_LOW"
+        else:
             return
-
-        self.cancel_reason = "STOP"
 
         if self.tracking_handle is not None:
             self.get_logger().info('Tracking Action 취소 요청')
@@ -216,10 +218,20 @@ class AutoNav(Node):
         self.send_next_goal()
 
     def return_home_by_stop(self):
-        self.cancel_reason = None
-        self.object_found = True
-        self.is_resuming = False
-        self.is_returning_home = True
+        if self.cancel_reason == "STOP":
+            self.publish_robot_task(
+                'USER_COMMAND',
+                '사용자 명령',
+                '순찰 종료',
+                'Task'
+            )
+        elif self.cancel_reason == "BATTERY_LOW":
+            self.publish_robot_task(
+                'BATTERY_LOW',
+                '배터리 경고',
+                '배터리가 30% 이하',
+                'WARNING'
+            )
 
         self.publish_object_found(
             "-",
@@ -231,12 +243,10 @@ class AutoNav(Node):
             'Return Home'
         )
 
-        self.publish_robot_task(
-            'USER_COMMAND',
-            '사용자 명령',
-            '순찰 종료',
-            'Task'
-        )
+        self.cancel_reason = None
+        self.object_found = True
+        self.is_resuming = False
+        self.is_returning_home = True
 
         self.get_logger().info('사용자 STOP → HOME 복귀')
 
