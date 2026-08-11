@@ -30,6 +30,7 @@ class SpringBridge(Node):
         self.latest_battery = None
         self.last_sent_battery = None
         self.filtered_battery = None
+        self.battery_low_alerted = False
         self.subscription_battery = self.create_subscription(
             BatteryState,
             '/battery_state',
@@ -41,9 +42,9 @@ class SpringBridge(Node):
             self.send_battery
         )
 
-        self.battery_row_pub = self.create_publisher(
+        self.battery_low_pub = self.create_publisher(
             String,
-            "/battery_row",
+            "/battery_low",
             10
         )
 
@@ -158,13 +159,27 @@ class SpringBridge(Node):
 
         self.last_sent_battery = self.latest_battery
         
-        if last_sent_battery <= 30:
+        if self.last_sent_battery <= 30 and not self.battery_low_alerted:
             msg = String()
             msg.data = json.dumps({
-                "battery": last_sent_battery,
-                "status": "row"
+                "battery": self.last_sent_battery,
+                "status": "low"
             })
-            self.battery_row_pub.publish(msg)
+            self.battery_low_pub.publish(msg)
+
+            status_msg = String()
+            status_msg.data = json.dumps({
+                "eventType": "BATTERY_LOW",
+                "message": "배터리 경고",
+                "note": "배터리가 30% 이하",
+                "status": "WARNING"
+            })
+            self.robot_task_callback(status_msg)
+
+            self.battery_low_alerted = True
+
+        elif self.last_sent_battery > 30:
+            self.battery_low_alerted = False
 
         data = {
             "type": "battery",

@@ -40,9 +40,9 @@ class CommandBridge(Node):
             self.check_launch_process
         )
 
-        self.subscription_battery_row = self.create_subscription(
+        self.subscription_battery_low = self.create_subscription(
             String,
-            '/battery_row',
+            '/battery_low',
             self.battery_callback,
             10
         )
