@@ -494,7 +494,7 @@ class AutoNav(Node):
             if self.cancel_reason == "OBJECT" and self.object_found:
                 self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle 서비스 호출')
                 self.launch_recycle_tracking_action()
-            return
+                return
 
         if status == GoalStatus.STATUS_ABORTED:
             self.get_logger().error("Goal Aborted by Nav2")
