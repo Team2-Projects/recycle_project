@@ -41,6 +41,12 @@ class SpringBridge(Node):
             self.send_battery
         )
 
+        self.battery_row_pub = self.create_publisher(
+            String,
+            "/battery_row",
+            10
+        )
+
         # tf
         self.last_pose = None
         self.tf_buffer = tf2_ros.Buffer()
@@ -151,6 +157,14 @@ class SpringBridge(Node):
                 return
 
         self.last_sent_battery = self.latest_battery
+        
+        if last_sent_battery <= 30:
+            msg = String()
+            msg.data = json.dumps({
+                "battery": last_sent_battery,
+                "status": "row"
+            })
+            self.battery_row_pub.publish(msg)
 
         data = {
             "type": "battery",

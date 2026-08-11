@@ -40,6 +40,13 @@ class CommandBridge(Node):
             self.check_launch_process
         )
 
+        self.subscription_battery_row = self.create_subscription(
+            String,
+            '/battery_row',
+            self.battery_callback,
+            10
+        )
+
     def check_launch_process(self):
         if self.launch_process is not None:
             if self.launch_process.poll() is not None:
@@ -102,13 +109,14 @@ class CommandBridge(Node):
             "Launch started"
         )
 
-
     def stop_navigation(self):
         msg = String()
         msg.data = "STOP"
 
         self.cancel_pub.publish(msg)
 
+    def battery_callback(self, msg):
+        self.stop_navigation()
 
 
 def main():
