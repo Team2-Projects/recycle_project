@@ -126,6 +126,12 @@ class AutoNav(Node):
             10
         )
 
+        self.goal_pub = self.create_publisher(
+            PoseStamped,
+            '/navigation_goal',
+            10
+        )
+
     def publish_recycle_success(self, object_name, confidence):
         msg = String()
         msg.data = json.dumps({
@@ -443,6 +449,8 @@ class AutoNav(Node):
         pose.pose.orientation.y = 0.0
         pose.pose.orientation.z = 0.0
         pose.pose.orientation.w = 1.0
+        
+        self.goal_pub.publish(pose)
 
         goal_msg      = NavigateToPose.Goal()
         goal_msg.pose = pose

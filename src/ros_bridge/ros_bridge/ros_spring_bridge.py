@@ -4,6 +4,8 @@ from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
+from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Path
 import tf2_ros
 from rclpy.qos import (
     QoSProfile,
@@ -59,6 +61,22 @@ class SpringBridge(Node):
         self.create_timer(
             0.5,
             self.send_robot_pose
+        )
+
+        # goal
+        self.subscription_goal = self.create_subscription(
+            PoseStamped,
+            '/navigation_goal',
+            self.goal_callback,
+            10
+        )
+
+        # path
+        self.subscription_path = self.create_subscription(
+            Path,
+            '/plan',
+            self.path_callback,
+            10
         )
 
         # object
@@ -219,6 +237,39 @@ class SpringBridge(Node):
         except Exception as e:
             self.get_logger().warn(
                 f"TF error: {e}"
+            )
+
+    def goal_callback(self, msg):
+        data = {
+            "type": "navigation_goal",
+            "x": msg.pose.position.x,
+            "y": msg.pose.position.y
+        }
+
+        self.ws.send(
+            json.dumps(data)
+        )
+
+    def path_callback(self, msg):
+        try:
+            path = []
+
+            for pose_stamped in msg.poses:
+                path.append({
+                    "x": pose_stamped.pose.position.x,
+                    "y": pose_stamped.pose.position.y
+                })
+
+            data = {
+                "type": "navigation_path",
+                "path": path
+            }
+
+            self.send_ws(data)
+
+        except Exception as e:
+            self.get_logger().error(
+                f"path error: {e}"
             )
 
     def object_callback(self, msg):
