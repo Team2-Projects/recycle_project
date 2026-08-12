@@ -49,6 +49,11 @@ class Recycle(Node):
         self._tick_waiters = []   # list of (target_time, future)
         self._tick_timer = self.create_timer(self._tick_period, self._on_tick, callback_group=self.cb_group)
 
+        self.goal_pub = self.create_publisher(
+            PoseStamped,
+            '/navigation_goal',
+            10
+        )
 
     def cancel_callback(self, goal_handle):
         self.get_logger().warn("🛑 Recycle Action cancel 요청 수신")
@@ -220,6 +225,8 @@ class Recycle(Node):
             pose.pose.orientation.w = 1.0
             goal_msg = NavigateToPose.Goal()
             goal_msg.pose = pose
+
+            self.goal_pub.publish(pose)
 
             self.nav_goal_handle = await self._action_client.send_goal_async(goal_msg)
 
