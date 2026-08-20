@@ -5,22 +5,12 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Path
-from tf2_ros import Buffer, TransformListener
-from std_msgs.msg import Empty
 from navigation_interface.action import RecycleActionMsg
 from action_msgs.msg import GoalStatus
 from std_msgs.msg import String
-
-import time
-import math
 import json
 
 from my_yolo_msgs.msg import DetectedObject
-from .nav_utils import normalize_angle, get_yaw_from_quaternion
-from rcl_interfaces.srv import SetParameters
-from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
-
-ACTION_RECYCLE_NODE = 'action_recycle_node'
 
 object_name = {0: 'can', 1: 'paper', 2: 'plastic'}
 class AutoNav(Node):
@@ -44,11 +34,8 @@ class AutoNav(Node):
         self.object_found = False
         self.object_id = None
         self.object_msg = None
-        self.coord = None
         self.home_x = None
         self.home_y = None
-        self.center_x = None
-        self.center_y = None
 
         self.cancel_reason = None
         self.is_returning_home = False
@@ -80,8 +67,6 @@ class AutoNav(Node):
 
         self.get_logger().info('AutoNav Ready.')
 
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.object_found_pub = self.create_publisher(
             String,
@@ -192,20 +177,6 @@ class AutoNav(Node):
             return
 
         self.get_logger().warn('현재 취소할 Action이 없습니다.')
-
-    def get_current_yaw(self):
-        try:
-            t = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
-            return get_yaw_from_quaternion(t.transform.rotation)
-        except Exception:
-            return None
-
-    def get_current_pose(self):
-        try:
-            t = self.tf_buffer.lookup_transform('map', 'base_link', rclpy.time.Time())
-            return t.transform.translation.x, t.transform.translation.y
-        except:
-            return self.home_x, self.home_y  
 
     def path_callback(self, msg):
         if self.is_running:
