@@ -29,7 +29,8 @@ class RecycleTrackingNode(Node):
 
         self.sub = self.create_subscription(
             DetectedObject,
-            '/classified_detected_object_info',
+            # '/classified_detected_object_info',
+            'detected_object_info',
             self.obj_callback,
             10,
             callback_group=self.cb_group)
@@ -547,7 +548,9 @@ def main(args=None):
     finally:
         executor.shutdown()
         node.destroy_node()
-        rclpy.shutdown()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

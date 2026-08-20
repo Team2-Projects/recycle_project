@@ -51,7 +51,6 @@ class AutoNav(Node):
         self.is_running = False
         self.object_found = False
         self.object_id = None
-        self.object_msg = None
         self.home_x = None
         self.home_y = None
         self.center_x = None
@@ -74,7 +73,7 @@ class AutoNav(Node):
         # [다중 수거 및 동일 종류 수거 제어 변수 (첫 번째 코드)]
         self.collected_count = 0         
         self.previous_object_id = None   
-        self.nearest_target_y_down = 0
+        self.nearest_target_y_up = 0
 
         latched_qos = QoSProfile(
             depth=1,
@@ -125,16 +124,6 @@ class AutoNav(Node):
         req = ControlPantilt.Request()
         req.angle = float(angle)
         self.pantilt_future = self.pantilt_client.call_async(req)
-
-    def stop_robot_callback(self):
-        if hasattr(self, 'stop_timer') and self.stop_timer:
-            self.stop_timer.cancel()
-            self.destroy_timer(self.stop_timer)
-
-        stop_msg = Twist()
-        stop_msg.linear.x = 0.0
-        self.cmd_vel_pub.publish(stop_msg)
-        self.get_logger().info('🛑 후진 완료 및 정지')
 
     # =========================================================================
     # JSON 퍼블리시 헬퍼 메서드 (두 번째 코드)
@@ -244,7 +233,7 @@ class AutoNav(Node):
             return
 
         # Y값 최신화 (첫 번째 코드의 수거함 포화 상태 체크용)
-        self.nearest_target_y_down = float(getattr(msg, 'max_y_down', 0))
+        self.nearest_target_y_up = float(getattr(msg, 'max_y_up', 0))
 
         if self.object_found:
             return
@@ -253,8 +242,9 @@ class AutoNav(Node):
         if self.collected_count > 0 and msg.id != self.previous_object_id:
             return  # 다른 종류는 무시
 
-        self.object_found = True
-        self.object_msg = msg
+        obj_name = object_name.get(msg.id, '-')
+        conf_val = f"{msg.confidence:.2f}" if hasattr(msg, 'confidence') else "1.00"
+        self.publish_recycle_success(obj_name, conf_val)
 
         if self.collected_count == 0:
             self.previous_object_id = msg.id
@@ -355,9 +345,9 @@ class AutoNav(Node):
         self.destroy_timer(self.check_timer)
 
         # 수거함 포화 여부 확인 (첫 번째 코드 로직)
-        if 0 <= self.nearest_target_y_down <= 120:
+        if 0 <= self.nearest_target_y_up <= 120:
             self.object_found = True  
-            self.get_logger().info(f'🗑️ 수거함 포화 감지 (y_down: {self.nearest_target_y_down:.1f})! HOME으로 이동합니다.')
+            self.get_logger().info(f'🗑️ 수거함 포화 감지 (y_up: {self.nearest_target_y_up:.1f})! HOME으로 이동합니다.')
             self.trigger_pantilt_movement(151)
             self.launch_recycle_action()
         else:
@@ -422,15 +412,9 @@ class AutoNav(Node):
         self.previous_object_id = None
         self.object_found = False
 
-        if self.object_msg:
-            obj_name = object_name.get(self.object_msg.id, '-')
-            conf_val = f"{self.object_msg.confidence:.2f}" if hasattr(self.object_msg, 'confidence') else "1.00"
-            self.publish_recycle_success(obj_name, conf_val)
-
         self.publish_robot_task("OBJECT_PICKUP_SUCCESS", "수거 성공", "", "Task")
         self.publish_robot_task("PATROL_RESUME", "순찰 재개", "", "Task")
 
-        self.object_msg = None
         self.get_logger().info(f'↩️ 버리기 완료! 원래 목표로 복귀 시작')
         self.resume_patrol()
 
