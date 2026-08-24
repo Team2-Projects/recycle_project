@@ -72,13 +72,11 @@ def main(args=None):
     node = CoveragePlanner()
     node.publish_path()
 
-    # 경로 발행까지 spin_once 사용
     while rclpy.ok() and not node.path_published:
         rclpy.spin_once(node, timeout_sec=0.1)
 
     node.get_logger().info('📡 경로 발행 완료!')
     
-    # 여기서 바로 종료하지 말고 spin으로 노드를 계속 살려둡니다.
     try:
         rclpy.spin(node) 
     except KeyboardInterrupt:

@@ -13,7 +13,6 @@ import math
 
 from my_yolo_cpp_pkg import detected_object_id
 from navigation_interface.action import RecycleActionMsg
-# 모터 및 팬틸트 제어용 서비스 인터페이스
 from navigation_interface.srv import ControlServo
 from navigation_interface.srv import ControlPantilt
 
@@ -24,7 +23,6 @@ class AutoNav(Node):
     def __init__(self):
         super().__init__('auto_nav')
         
-        # Action Clients
         self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._recycle_client = ActionClient(self, RecycleActionMsg, 'recycle_action')
         self._recycle_tracking_client = ActionClient(self, RecycleActionMsg, 'recycle_tracking_action')
@@ -35,7 +33,6 @@ class AutoNav(Node):
         
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
-        # 서보 및 팬틸트 서비스 클라이언트 초기화 (첫 번째 코드 핵심 기능)
         self.servo_client = self.create_client(ControlServo, 'control_servo')
         while not self.servo_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for servo service on Raspberry Pi...')
@@ -44,7 +41,6 @@ class AutoNav(Node):
         while not self.pantilt_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
 
-        # State Variables
         self.waypoints = []
         self.current_idx = 0
 
@@ -53,24 +49,19 @@ class AutoNav(Node):
         self.object_id = None
         self.home_x = None
         self.home_y = None
-        self.center_x = None
-        self.center_y = None
 
         self.cancel_reason = None
         self.is_returning_home = False
-        self.flag = False
 
         self.resume_x = None
         self.resume_y = None
         self.current_handle = None
         self.tracking_handle = None
         self.recycle_handle = None
-        self.is_resuming = False  
 
         self.going_home = False  
         self.home_arrive_threshold = 0.5
 
-        # [다중 수거 및 동일 종류 수거 제어 변수 (첫 번째 코드)]
         self.collected_count = 0         
         self.previous_object_id = None   
         self.nearest_target_y_up = 0
@@ -83,7 +74,6 @@ class AutoNav(Node):
 
         self.create_subscription(Path, '/coverage_path', self.path_callback, latched_qos)
         
-        # 객체 감지 구독 (첫 번째 코드의 패키지/토픽 명 기준 유지 혹은 팀 메시지 적용 가능)
         self.object_sub = self.create_subscription(
             detected_object_id.DetectedObject,
             '/detected_object_info',
@@ -91,7 +81,6 @@ class AutoNav(Node):
             10
         )
 
-        # 팀 UI/상태 연동 퍼블리셔 및 서브스크라이버
         self.object_found_pub = self.create_publisher(String, "/object_found", 10)
         self.robot_status_pub = self.create_publisher(String, "/robot_status", 10)
         self.robot_task_pub = self.create_publisher(String, "/robot_task", 10)
@@ -105,15 +94,11 @@ class AutoNav(Node):
             10
         )
 
-        # 초기 상태 퍼블리시
         self.publish_robot_state("state", "Running")
         self.publish_robot_task("PATROL_START", "순찰 시작", "", "Task")
 
         self.get_logger().info('AutoNav Ready with Multi-collection, Motor, and Web UI integration.')
 
-    # =========================================================================
-    # 하드웨어 제어 (서보 및 팬틸트) 메서드
-    # =========================================================================
     def trigger_servo_movement(self, angle1, angle2):
         req = ControlServo.Request()
         req.angle1 = float(angle1)
@@ -125,9 +110,6 @@ class AutoNav(Node):
         req.angle = float(angle)
         self.pantilt_future = self.pantilt_client.call_async(req)
 
-    # =========================================================================
-    # JSON 퍼블리시 헬퍼 메서드 (두 번째 코드)
-    # =========================================================================
     def publish_recycle_success(self, obj_name, confidence):
         msg = String()
         msg.data = json.dumps({
@@ -164,9 +146,6 @@ class AutoNav(Node):
         })
         self.robot_task_pub.publish(msg)
 
-    # =========================================================================
-    # 명령어 콜백 및 홈 복귀 처리
-    # =========================================================================
     def command_callback(self, msg):
         if msg.data == "STOP":
             self.cancel_reason = "STOP"
@@ -203,15 +182,11 @@ class AutoNav(Node):
 
         self.cancel_reason = None
         self.object_found = True
-        self.is_resuming = False
         self.is_returning_home = True
 
         self.get_logger().info('사용자 STOP 또는 배터리 부족 → HOME 복귀')
         self.send_goal(self.home_x, self.home_y)
 
-    # =========================================================================
-    # 패스 및 객체 감지 콜백
-    # =========================================================================
     def path_callback(self, msg):
         if self.is_running:
             self.get_logger().warn('Already navigating, ignoring new path')
@@ -220,8 +195,6 @@ class AutoNav(Node):
         self.waypoints = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
         self.home_x = self.waypoints[-1][0]
         self.home_y = self.waypoints[-1][1]
-        self.center_x = self.waypoints[2][0] if len(self.waypoints) > 2 else self.waypoints[0][0]
-        self.center_y = self.waypoints[2][1] if len(self.waypoints) > 2 else self.waypoints[0][1]
 
         self.current_idx = 0
         self.is_running = True
@@ -232,15 +205,13 @@ class AutoNav(Node):
         if msg.id == -1:
             return
 
-        # Y값 최신화 (첫 번째 코드의 수거함 포화 상태 체크용)
         self.nearest_target_y_up = float(getattr(msg, 'max_y_up', 0))
 
         if self.object_found:
             return
             
-        # [종류 필터링 (첫 번째 코드)]
         if self.collected_count > 0 and msg.id != self.previous_object_id:
-            return  # 다른 종류는 무시
+            return 
 
         obj_name = object_name.get(msg.id, '-')
         conf_val = f"{msg.confidence:.2f}" if hasattr(msg, 'confidence') else "1.00"
@@ -252,11 +223,9 @@ class AutoNav(Node):
 
         self.object_found = True
 
-        # 서보 모터 작동
         self.get_logger().info("Object detected! Triggering servo...")
         self.trigger_servo_movement(-90, 90)
 
-        # UI 연동 퍼블리시
         obj_str = object_name.get(msg.id, '-')
         conf_val = f"{msg.confidence:.2f}" if hasattr(msg, 'confidence') else "1.00"
         
@@ -276,18 +245,13 @@ class AutoNav(Node):
         if self.current_idx < len(self.waypoints):
             self.resume_x, self.resume_y = self.waypoints[self.current_idx]
         
-        # 로봇 정지
         stop_msg = Twist()
         self.cmd_vel_pub.publish(stop_msg)
         
-        # 주행 취소
         if self.current_handle is not None:
             self.cancel_reason = "OBJECT"
             self.current_handle.cancel_goal_async()
 
-    # =========================================================================
-    # 1단계 : Recycle Tracking (접근 및 정렬)
-    # =========================================================================
     def launch_recycle_tracking_action(self):
         self.publish_robot_task("OBJECT_PICKUP_START", "수거 시작", "", "Task")
         
@@ -328,7 +292,6 @@ class AutoNav(Node):
             self.send_goal(self.resume_x, self.resume_y)
             return
 
-        # 수거 성공 시 서보/팬틸트 제어 및 수거 카운트 증가 (첫 번째 코드)
         self.get_logger().info("Successed tracking! Triggering servo & pantilt...")
         self.trigger_servo_movement(0, 0)
         self.trigger_pantilt_movement(90)
@@ -338,7 +301,6 @@ class AutoNav(Node):
         
         self.object_found = False
         
-        # 3초간 정지 및 수거함 상태 확인 타이머 생성
         self.get_logger().info('⏳ 3초간 수거함 상태 확인 중...')
         self.check_timer = self.create_timer(3.0, self.check_recycle_condition_callback)
 
@@ -346,7 +308,6 @@ class AutoNav(Node):
         self.check_timer.cancel()
         self.destroy_timer(self.check_timer)
 
-        # 수거함 포화 여부 확인 (첫 번째 코드 로직)
         if 0 <= self.nearest_target_y_up <= 120:
             self.object_found = True  
             self.get_logger().info(f'🗑️ 수거함 포화 감지 (y_up: {self.nearest_target_y_up:.1f})! HOME으로 이동합니다.')
@@ -357,19 +318,14 @@ class AutoNav(Node):
             self.get_logger().info('🔄 수거 완료. 순찰을 계속합니다.')
             if self.object_found:
                 self.object_found = False
-            self.resume_patrol()
+            self.send_goal(self.resume_x, self.resume_y)
 
-    # =========================================================================
-    # 2단계 : Recycle Action (HOME 이동 및 버리기)
-    # =========================================================================
     def launch_recycle_action(self):
         goal_msg = RecycleActionMsg.Goal()
         goal_msg.index = self.object_id if self.object_id is not None else 1
         goal_msg.current_idx = self.current_idx
         goal_msg.home_x = self.home_x
         goal_msg.home_y = self.home_y
-        goal_msg.center_x = getattr(self, 'center_x', 0.0)
-        goal_msg.center_y = getattr(self, 'center_y', 0.0)
 
         self.get_logger().info('🚀 recycle_action 호출 (HOME 이동 + 후진 + 회전)')
         future = self._recycle_client.send_goal_async(goal_msg)
@@ -402,14 +358,6 @@ class AutoNav(Node):
             self.object_found = False
             return
 
-        # 버리기 완료 후 서보 제어 및 후진 모터 구동 (첫 번째 코드)
-        self.trigger_servo_movement(-90, 90)
-        msg = Twist()
-        msg.linear.x = -0.1
-        self.cmd_vel_pub.publish(msg)
-        self.stop_timer = self.create_timer(3.0, self.stop_robot_callback)
-
-        # 상태 초기화
         self.collected_count = 0
         self.previous_object_id = None
         self.object_found = False
@@ -418,24 +366,19 @@ class AutoNav(Node):
         self.publish_robot_task("PATROL_RESUME", "순찰 재개", "", "Task")
 
         self.get_logger().info(f'↩️ 버리기 완료! 원래 목표로 복귀 시작')
-        self.resume_patrol()
-
-    # =========================================================================
-    # Nav2 주행 관리 함수들
-    # =========================================================================
-    def resume_patrol(self):
-        self.is_resuming = True
-        if self.current_idx in (3, 4):
-            self.send_goal(self.center_x, self.center_y)
-            self.flag = True
-        else:
-            self.send_goal(self.resume_x, self.resume_y)
+        self.current_idx = 0
+        self.send_next_goal()
 
     def send_next_goal(self):
         if self.current_idx >= len(self.waypoints):
+            if self.collected_count >= 0:
+                self.launch_recycle_action()
+                return 
+            
             self.publish_robot_state("state", "Stop")
             self.publish_robot_task("PATROL_COMPLETE", "순찰 종료", "", "Task")
             self.get_logger().info('🏁 Patrol finished. Shutting down...')
+
             if rclpy.ok():
                 rclpy.shutdown()
             return
@@ -505,20 +448,12 @@ class AutoNav(Node):
             self.send_next_goal()
             return
 
-        if self.is_resuming:
-            self.get_logger().info('✅ 끊겼던 지점으로 복귀 완료! 다음 웨이포인트로 주행을 이어갑니다.')
-            self.is_resuming = False
-        else:
-            if self.current_idx < len(self.waypoints):
-                x, y = self.waypoints[self.current_idx]
-                self.get_logger().info(f'✅ Reached ({x:.2f}, {y:.2f})')
+        if self.current_idx < len(self.waypoints):
+            x, y = self.waypoints[self.current_idx]
+            self.get_logger().info(f'✅ Reached ({x:.2f}, {y:.2f})')
             
-        if getattr(self, 'flag', False):
-            self.flag = False
-            self.send_goal(self.resume_x, self.resume_y)
-        else:
-            self.current_idx += 1
-            self.send_next_goal()
+        self.current_idx += 1
+        self.send_next_goal()
 
     def feedback_callback(self, feedback_msg):
         dist = feedback_msg.feedback.distance_remaining
