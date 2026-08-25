@@ -10,7 +10,8 @@ import tf2_ros
 from rclpy.qos import (
     QoSProfile,
     ReliabilityPolicy,
-    HistoryPolicy
+    HistoryPolicy,
+    DurabilityPolicy
 )
 
 import websocket
@@ -26,7 +27,7 @@ class SpringBridge(Node):
         super().__init__('spring_bridge')
 
         self.ws = websocket.WebSocket()
-        self.ws.connect("ws://192.168.0.16:8080/robot")
+        self.ws.connect("ws://192.168.0.58:8080/robot")
 
         # battery
         self.latest_battery = None
@@ -64,11 +65,17 @@ class SpringBridge(Node):
         )
 
         # goal
+        goal_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE
+        )
+
         self.subscription_goal = self.create_subscription(
             PoseStamped,
             '/navigation_goal',
             self.goal_callback,
-            10
+            goal_qos
         )
 
         # path

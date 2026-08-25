@@ -34,12 +34,12 @@ class AutoNav(Node):
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
         self.servo_client = self.create_client(ControlServo, 'control_servo')
-        while not self.servo_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Waiting for servo service on Raspberry Pi...')
+        # while not self.servo_client.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('Waiting for servo service on Raspberry Pi...')
 
         self.pantilt_client = self.create_client(ControlPantilt, 'control_pantilt')
-        while not self.pantilt_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
+        # while not self.pantilt_client.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
 
         self.waypoints = []
         self.current_idx = 0
@@ -85,7 +85,13 @@ class AutoNav(Node):
         self.robot_status_pub = self.create_publisher(String, "/robot_status", 10)
         self.robot_task_pub = self.create_publisher(String, "/robot_task", 10)
         self.recycle_success_pub = self.create_publisher(String, "/recycle_success", 10)
-        self.goal_pub = self.create_publisher(PoseStamped, '/navigation_goal', 10)
+
+        goal_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE
+        )
+        self.goal_pub = self.create_publisher(PoseStamped, '/navigation_goal', goal_qos)
 
         self.command_sub = self.create_subscription(
             String,
@@ -362,16 +368,17 @@ class AutoNav(Node):
         self.previous_object_id = None
         self.object_found = False
 
-        self.publish_robot_task("OBJECT_PICKUP_SUCCESS", "수거 성공", "", "Task")
         self.publish_robot_task("PATROL_RESUME", "순찰 재개", "", "Task")
 
         self.get_logger().info(f'↩️ 버리기 완료! 원래 목표로 복귀 시작')
+
         self.current_idx = 0
         self.send_next_goal()
 
     def send_next_goal(self):
         if self.current_idx >= len(self.waypoints):
-            if self.collected_count >= 0:
+            if self.collected_count > 0:
+                self.publish_robot_task("OBJECT_PICKUP_START", "수거 시작", "", "Task")
                 self.launch_recycle_action()
                 return 
             
@@ -384,10 +391,6 @@ class AutoNav(Node):
             return
 
         x, y = self.waypoints[self.current_idx]
-        total = len(self.waypoints)
-        self.going_home = (self.current_idx == total - 1)
-        label = '[HOME]' if self.current_idx == total - 1 else f'[{self.current_idx + 1}/{total}]'
-        self.get_logger().info(f'Navigating to {label} ({x:.2f}, {y:.2f})')
         self.send_goal(x, y)
 
     def send_goal(self, x, y):
@@ -457,7 +460,11 @@ class AutoNav(Node):
 
     def feedback_callback(self, feedback_msg):
         dist = feedback_msg.feedback.distance_remaining
-        if self.going_home and not self.object_found:
+        is_last_waypoint = (
+            self.current_idx == len(self.waypoints) - 1
+        )
+
+        if is_last_waypoint and not self.object_found:
             if dist <= self.home_arrive_threshold:
                 self.object_found = True
 

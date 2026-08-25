@@ -7,6 +7,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.task import Future
 from rclpy.duration import Duration
 from rclpy.action import ActionClient, ActionServer, CancelResponse
+from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped, Twist
@@ -76,11 +77,24 @@ class Recycle(Node):
             callback_group=self.cb_group
         )
 
-        self.goal_pub = self.create_publisher(
-            PoseStamped,
-            '/navigation_goal',
-            10
+        goal_qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE
         )
+        self.goal_pub = self.create_publisher(PoseStamped, '/navigation_goal', goal_qos)
+
+        self.robot_task_pub = self.create_publisher(String, "/robot_task", 10)
+
+    def publish_robot_task(self, eventType, message, note, status):
+        msg = String()
+        msg.data = json.dumps({
+            "eventType": eventType,
+            "message": message,
+            "note": note,
+            "status": status
+        })
+        self.robot_task_pub.publish(msg)
 
     def cancel_callback(self, goal_handle):
 
@@ -222,6 +236,8 @@ class Recycle(Node):
             )
 
             success = await self.move_backward(goal_handle, previous_x, previous_y, speed=0.08)
+
+            self.publish_robot_task("OBJECT_PICKUP_SUCCESS", "수거 성공", "", "Task")
 
             if goal_handle.is_cancel_requested:
                 return self.cancel_result(goal_handle)
