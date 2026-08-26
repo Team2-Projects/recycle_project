@@ -34,12 +34,12 @@ class AutoNav(Node):
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
         self.servo_client = self.create_client(ControlServo, 'control_servo')
-        # while not self.servo_client.wait_for_service(timeout_sec=1.0):
-        #     self.get_logger().info('Waiting for servo service on Raspberry Pi...')
+        while not self.servo_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Waiting for servo service on Raspberry Pi...')
 
         self.pantilt_client = self.create_client(ControlPantilt, 'control_pantilt')
-        # while not self.pantilt_client.wait_for_service(timeout_sec=1.0):
-        #     self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
+        while not self.pantilt_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
 
         self.waypoints = []
         self.current_idx = 0
