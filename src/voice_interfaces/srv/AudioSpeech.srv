@@ -1,0 +1,8 @@
+# Request (클라이언트인 라즈베리 파이가 보냄)
+bool save_flag
+string save_point
+uint8[] audio_data    # <-- 파일 경로 대신 오디오 바이트 데이터를 직접 담음 (선택사항)
+---
+# Response (서버인 로컬 PC가 응답함)
+bool success
+string text

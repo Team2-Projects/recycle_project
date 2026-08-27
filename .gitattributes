@@ -1,0 +1,1 @@
+src/speech_recognition/models/whisper_tiny_openvino/openvino_decoder_model.bin filter=lfs diff=lfs merge=lfs -text
