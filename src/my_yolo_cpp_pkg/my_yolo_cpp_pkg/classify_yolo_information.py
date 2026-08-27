@@ -17,7 +17,14 @@ from rclpy.qos import (
 
 # 변환된 OpenVINO 모델 xml 파일 경로
 model_path = '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/classify_model_openvino/classify_model.xml'
-object_id = {'can': 0, 'paper': 1, 'plastic': 2}
+object_id = {
+    'can': 0,
+    'paper': 1,
+    'plastic': 2,
+    'trash': 3,
+    'glass_bottle': 4,
+    'person': 5
+}
 
 class YoloNode(Node):
     def __init__(self):
@@ -26,8 +33,11 @@ class YoloNode(Node):
         self.frame_count = 0
         self.is_tracking = False 
         self.declare_parameter('conf_threshold', 0.4)
-        
-        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/transfer_v3_openvino_model')
+
+        self.model = YOLO(
+    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
+    task='segment'
+)
         
         # [수정] ONNX Runtime 대신 OpenVINO Core로 분류 모델 로드
         self.ov_core = ov.Core()
@@ -116,12 +126,12 @@ class YoloNode(Node):
 
         self.pred_class = np.argmax(result[0])
 
-        if self.pred_class == 3:
+        if self.pred_class == -1:
             
             msg_data.id = -1
             msg_data.confidence = 0.0
             msg_data.coord = [0.0, 0.0, 0.0, 0.0]
-        if self.pred_class != 3:
+        if self.pred_class != -1:
             results = self.model.predict(source=frame, imgsz=640, conf=conf_val, verbose=False)
             res = results[0]
             # self.get_logger().info('box_number = {}'.format(len(res.boxes)))
@@ -140,26 +150,24 @@ class YoloNode(Node):
                     msg_data.id = object_id[best_name]
                     msg_data.confidence = confidences[self.target_idx]
                     msg_data.coord = [float(x) for x in best_coord]
+                    msg_data.max_y_up = best_coord[1] - 0.5*best_coord[3]
+                    # x,y,w,h = best_coord
+                    # pt1_x = int(x - (w/2))
+                    # pt1_y = int(y - (h/2))
+                    # pt2_x = int(x + (w/2))
+                    # pt2_y = int(y + (h/2))
 
-                    x,y,w,h = best_coord
-                    pt1_x = int(x - (w/2))
-                    pt1_y = int(y - (h/2))
-                    pt2_x = int(x + (w/2))
-                    pt2_y = int(y + (h/2))
-
-                    org_x = pt1_x - 5
-                    org_y = pt1_y - 5
+                    # org_x = pt1_x - 5
+                    # org_y = pt1_y - 5
                     
-                    cv2.rectangle(frame, (pt1_x, pt1_y), (pt2_x, pt2_y), (0, 40, 200), 3)
-                    cv2.putText(frame, best_name, (org_x, org_y), cv2.FONT_HERSHEY_SIMPLEX, fontScale = 2, thickness = 3, color = (255, 0, 0))
+                    # cv2.rectangle(frame, (pt1_x, pt1_y), (pt2_x, pt2_y), (0, 40, 200), 3)
+                    # cv2.putText(frame, best_name, (org_x, org_y), cv2.FONT_HERSHEY_SIMPLEX, fontScale = 2, thickness = 3, color = (255, 0, 0))
                 else:
                     msg_data.id = -1
                     msg_data.confidence = 0.0
                     msg_data.coord = [0.0, 0.0, 0.0, 0.0]
-            else:
-                msg_data.id = -1
-                msg_data.confidence = 0.0
-                msg_data.coord = [0.0, 0.0, 0.0, 0.0]
+                    msg_data.max_y_up = 0
+           
 
         self.publisher_.publish(msg_data)
         self.publish_image(frame)

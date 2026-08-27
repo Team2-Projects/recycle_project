@@ -9,7 +9,14 @@ from my_yolo_msgs.msg import DetectedObject
 from my_yolo_msgs.srv import SetTracking
 import time
 
-object_id = {'can': 0, 'paper': 1, 'plastic': 2}
+object_id = {
+    'can': 0,
+    'paper': 1,
+    'plastic': 2,
+    'trash': 3,
+    'glass_bottle': 4,
+    'person': 5
+}
 
 class YoloNode(Node):
     def __init__(self):
@@ -20,7 +27,10 @@ class YoloNode(Node):
         self.is_tracking = False # 추적 모드 플래그
         self.declare_parameter('conf_threshold', 0.4)
 
-        self.model = YOLO('/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/transfer_v3_openvino_model')
+        self.model = YOLO(
+    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
+    task='segment'
+)
         
         # [시간 측정용 변수 초기화]
         self.processing_times = []
@@ -91,7 +101,7 @@ class YoloNode(Node):
                 
             if best_name in object_id:
                 msg_data.id = object_id[best_name]
-                msg_data.confidence = confidences[self.target_idx]
+                msg_data.confidence = confidences[target_idx]
                 msg_data.coord = [float(x) for x in best_coord]
                 msg_data.max_y_up = best_coord[1] - 0.5*best_coord[3]
             else:
