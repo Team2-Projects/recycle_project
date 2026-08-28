@@ -102,6 +102,7 @@ class AutoNav(Node):
 
         self.publish_robot_state("state", "Running")
         self.publish_robot_task("PATROL_START", "순찰 시작", "", "Task")
+        self.trigger_servo_movement(0, 0)
 
         self.get_logger().info('AutoNav Ready with Multi-collection, Motor, and Web UI integration.')
 
