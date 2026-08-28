@@ -30,7 +30,7 @@ class CoveragePlanner(Node):
         if self.path_published:
             return
 
-        self.home_x = 0.5
+        self.home_x = 0.2
         self.home_y = -1.5
 
         waypoints = [

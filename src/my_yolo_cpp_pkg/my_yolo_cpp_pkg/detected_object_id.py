@@ -24,11 +24,13 @@ class YoloNode(Node):
         
         self.frame_count = 0
 
+        self.target_idx = 0;
+
         self.is_tracking = False # 추적 모드 플래그
         self.declare_parameter('conf_threshold', 0.4)
 
         self.model = YOLO(
-    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
+    '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
     task='segment'
 )
         
@@ -88,20 +90,20 @@ class YoloNode(Node):
         res = results[0]
         msg_data = DetectedObject()
 
+        confidences = res.boxes.conf.tolist()
         if len(res.boxes) > 0:
             if self.is_tracking:
-                target_idx = self.get_closest_to_center(res.boxes)
+                self.target_idx = self.get_closest_to_center(res.boxes)
             else:
-                confidences = res.boxes.conf.tolist()
-                target_idx = confidences.index(max(confidences))
+                self.target_idx = confidences.index(max(confidences))
                 
-            best_cls_id = int(res.boxes.cls[target_idx].item())
+            best_cls_id = int(res.boxes.cls[self.target_idx].item())
             best_name = res.names[best_cls_id]
-            best_coord = res.boxes.xywh[target_idx].tolist()
+            best_coord = res.boxes.xywh[self.target_idx].tolist()
                 
             if best_name in object_id:
                 msg_data.id = object_id[best_name]
-                msg_data.confidence = confidences[target_idx]
+                msg_data.confidence = confidences[self.target_idx]
                 msg_data.coord = [float(x) for x in best_coord]
                 msg_data.max_y_up = best_coord[1] - 0.5*best_coord[3]
             else:
