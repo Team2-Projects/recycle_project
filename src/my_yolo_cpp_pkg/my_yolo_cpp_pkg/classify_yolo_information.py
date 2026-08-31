@@ -16,7 +16,7 @@ from rclpy.qos import (
 )
 
 # 변환된 OpenVINO 모델 xml 파일 경로
-model_path = '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/classify_model_openvino/classify_model.xml'
+model_path = '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0829classify_model_openvino/classify_model.xml'
 object_id = {
     'can': 0,
     'paper': 1,
@@ -32,7 +32,7 @@ class YoloNode(Node):
         
         self.frame_count = 0
         self.is_tracking = False 
-        self.declare_parameter('conf_threshold', 0.4)
+        self.declare_parameter('conf_threshold', 0.25)
 
         self.model = YOLO(
     '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
@@ -102,7 +102,7 @@ class YoloNode(Node):
 
     def get_closest_to_center(self, boxes):
         centers_x = boxes.xywh[:, 0].tolist()
-        distances = [abs(x - 320) for x in centers_x]
+        distances = [abs(x - 400) for x in centers_x]
         return distances.index(min(distances))
 
     def listener_callback(self, msg):
@@ -114,24 +114,24 @@ class YoloNode(Node):
         np_arr = np.frombuffer(msg.data, np.uint8)
         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         
-        start_time = time.time()
+        # start_time = time.time()
         msg_data = DetectedObject()
 
-        # 1. 전처리 (기존과 동일하게 텐서 형태 맞추기)
-        frame_classify = frame.transpose(1, 0, 2)
-        frame_classify = np.expand_dims(frame_classify, axis=0).astype(np.float32)
+        # # 1. 전처리 (기존과 동일하게 텐서 형태 맞추기)
+        # frame_classify = frame.transpose(1, 0, 2)
+        # frame_classify = np.expand_dims(frame_classify, axis=0).astype(np.float32)
         
         # 2. [수정] OpenVINO 모델 추론 실행
-        result = self.compiled_classify_model({self.input_key: frame_classify})[self.output_key]
+        result = self.compiled_classify_model({self.input_key: frame.reshape(1,480,640,3)})[self.output_key]
 
         self.pred_class = np.argmax(result[0])
 
-        if self.pred_class == -1:
+        if self.pred_class == 0:
             
             msg_data.id = -1
             msg_data.confidence = 0.0
             msg_data.coord = [0.0, 0.0, 0.0, 0.0]
-        if self.pred_class != -1:
+        if self.pred_class != 0:
             results = self.model.predict(source=frame, imgsz=640, conf=conf_val, verbose=False)
             res = results[0]
             # self.get_logger().info('box_number = {}'.format(len(res.boxes)))

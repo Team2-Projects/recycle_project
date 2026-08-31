@@ -12,6 +12,7 @@ import time
 import math
 
 from my_yolo_cpp_pkg import detected_object_id
+from my_yolo_cpp_pkg import classify_yolo_infomation
 from navigation_interface.action import RecycleActionMsg
 from navigation_interface.srv import ControlServo
 from navigation_interface.srv import ControlPantilt
@@ -75,8 +76,8 @@ class AutoNav(Node):
         self.create_subscription(Path, '/coverage_path', self.path_callback, latched_qos)
         
         self.object_sub = self.create_subscription(
-            detected_object_id.DetectedObject,
-            '/detected_object_info',
+            classify_yolo_infomation.DetectedObject,
+            '/classified_detected_object_info',
             self.object_callback,
             10
         )

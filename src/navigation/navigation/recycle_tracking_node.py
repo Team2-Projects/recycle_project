@@ -25,12 +25,12 @@ class RecycleTrackingNode(Node):
         self.cb_group = ReentrantCallbackGroup()
 
         self.latest_object = None
-        self.target_h_threshold = 320
+      
 
         self.sub = self.create_subscription(
             DetectedObject,
-            # '/classified_detected_object_info',
-            'detected_object_info',
+            '/classified_detected_object_info',
+            # 'detected_object_info',
             self.obj_callback,
             10,
             callback_group=self.cb_group)
@@ -235,7 +235,7 @@ class RecycleTrackingNode(Node):
 
             # 1. 실시간으로 최신 데이터 가져오기 (매우 중요!)
             if self.latest_object is None:
-                init_diff = 320 - target_x
+                init_diff = 400 - target_x
                 msg = Twist()
                 # 0.2 -> 0.05
 
@@ -245,7 +245,7 @@ class RecycleTrackingNode(Node):
                     
                 time.sleep(0.05)
                 
-                if abs(init_diff) < 20:
+                if abs(init_diff) < 10:
                     self.get_logger().info(f"정렬 성공! 오차 픽셀: {init_diff:.2f}")
                     break
                 # self.cmd_vel_pub.publish(Twist())
@@ -263,7 +263,7 @@ class RecycleTrackingNode(Node):
 
             target_x = self.latest_object.coord[0]
             #target_x = current_x
-            diff = 320 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
+            diff = 400 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
 
 
                 # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
@@ -275,7 +275,7 @@ class RecycleTrackingNode(Node):
             time.sleep(0.05) # 너무 자주 보내지 않게 잠시 대기
 
                 # 4. 정렬 조건 (오차 20픽셀 이내)
-            if abs(diff) < 20:
+            if abs(diff) < 10:
                 self.get_logger().info(f"정렬 성공! 오차 픽셀: {diff:.2f}")
                 break
 
@@ -290,10 +290,10 @@ class RecycleTrackingNode(Node):
 
         target_x = self.latest_object.coord[0]
         #target_x = current_x
-        diff = 320 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
+        diff = 400 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
                 # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
 
-        if abs(diff) >= 20:
+        if abs(diff) >= 10:
             if not self.align_robot(goal_handle, target_x):
                 return False    
 

@@ -6,7 +6,7 @@ def generate_launch_description():
         # 첫 번째 노드: detected_object_id.py (토픽 발행용)
         Node(
             package='my_yolo_cpp_pkg',  # 실제 패키지 이름으로 확인
-            executable='return_object_id_node', # setup.py left name
+            executable='classified_object_info_node', # setup.py left name
             name='object_detection_node',
             output='screen'
         ),

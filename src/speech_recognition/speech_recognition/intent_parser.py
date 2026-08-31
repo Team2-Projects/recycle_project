@@ -43,16 +43,16 @@ class IntentParser:
             if x is None or y is None:
                 return "현재 로봇 위치를 확인할 수 없습니다."
             
-            if del_x >= 0 or del_y >= 0
+            if del_x >= 0 or del_y >= 0:
                 return f"분리수거장은는 동쪽으로 {del_x:.2f}미터, 북쪽으로 {del_y:.2f}미터 떨어져 있습니다."
 
-            elif del_x < 0 or del_y >= 0
+            elif del_x < 0 or del_y >= 0:
                 return f"분리수거장은는 서쪽으로 {del_x:.2f}미터, 북쪽으로 {del_y:.2f}미터 떨어져 있습니다."
 
-            elif del_x >= 0 or del_y < 0
+            elif del_x >= 0 or del_y < 0:
                 return f"분리수거장은는 동쪽으로 {del_x:.2f}미터, 남쪽으로 {del_y:.2f}미터 떨어져 있습니다."
 
-            elif del_x < 0 or del_y < 0
+            elif del_x < 0 or del_y < 0:
                 return f"분리수거장은는 서쪽으로 {del_x:.2f}미터, 남쪽으로 {del_y:.2f}미터 떨어져 있습니다."
 
         # ==========================================

@@ -9,7 +9,14 @@ import numpy as np
 from ament_index_python.packages import get_package_share_directory
 import os
 
-clf_idx = {'can': 0, 'paper': 1, 'plastic': 2}
+clf_idx = {
+    'can': 0,
+    'paper': 1,
+    'plastic': 2,
+    'trash': 3,
+    'glass_bottle': 4,
+    'person': 5
+}
 
 
 class YoloNode(Node):
@@ -17,7 +24,7 @@ class YoloNode(Node):
         super().__init__('yolo_node')
         self.frame_count = 0
         self.bridge = CvBridge() # ★ bridge 초기화도 잊지 마세요 ★
-        self.declare_parameter('conf', 0.4)
+        self.declare_parameter('conf', 0.25)
         # 모델 경로를 확인하세요
         # 1. 패키지의 share 경로를 자동으로 찾음
         # package_share_directory = get_package_share_directory('my_yolo_cpp_pkg')
