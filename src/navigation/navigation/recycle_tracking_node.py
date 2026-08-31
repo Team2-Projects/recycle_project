@@ -57,6 +57,7 @@ class RecycleTrackingNode(Node):
     def obj_callback(self, msg):
         self.latest_object = msg
 
+
     def call_tracking_srv(self, enable):
         req = SetTracking.Request()
         req.enable = enable
@@ -234,7 +235,7 @@ class RecycleTrackingNode(Node):
                 return False
 
             # 1. 실시간으로 최신 데이터 가져오기 (매우 중요!)
-            if self.latest_object is None:
+            if self.latest_object.id == -1:
                 init_diff = 400 - target_x
                 msg = Twist()
                 # 0.2 -> 0.05
@@ -259,25 +260,26 @@ class RecycleTrackingNode(Node):
                 # time.sleep(0.05)
                 continue
             
-            # 1. 실시간 중심점 계산
+            else:
+                # 1. 실시간 중심점 계산
 
-            target_x = self.latest_object.coord[0]
-            #target_x = current_x
-            diff = 400 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
+                target_x = self.latest_object.coord[0]
+                #target_x = current_x
+                diff = 400 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
 
 
-                # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
-            msg = Twist()
-            # 0.2 -> 0.05
-            msg.angular.z = (1 if diff > 0 else -1) * 0.05
-            self.cmd_vel_pub.publish(msg)
-                
-            time.sleep(0.05) # 너무 자주 보내지 않게 잠시 대기
+                    # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
+                msg = Twist()
+                # 0.2 -> 0.05
+                msg.angular.z = (1 if diff > 0 else -1) * 0.05
+                self.cmd_vel_pub.publish(msg)
+                    
+                time.sleep(0.05) # 너무 자주 보내지 않게 잠시 대기
 
-                # 4. 정렬 조건 (오차 20픽셀 이내)
-            if abs(diff) < 10:
-                self.get_logger().info(f"정렬 성공! 오차 픽셀: {diff:.2f}")
-                break
+                    # 4. 정렬 조건 (오차 20픽셀 이내)
+                if abs(diff) < 10:
+                    self.get_logger().info(f"정렬 성공! 오차 픽셀: {diff:.2f}")
+                    break
 
 
         self.cmd_vel_pub.publish(Twist()) # 정렬 완료 시 정지

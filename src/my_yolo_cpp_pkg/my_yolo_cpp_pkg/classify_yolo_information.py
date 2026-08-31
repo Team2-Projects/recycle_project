@@ -21,7 +21,7 @@ from rclpy.qos import (
 
 # OpenVINO 분류 모델 경로
 model_path = (
-    '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
+    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
     '0829classify_model_openvino/classify_model.xml'
 )
 
@@ -50,7 +50,7 @@ class YoloNode(Node):
 
         # YOLO 모델 로드
         self.model = YOLO(
-            '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
+            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
             task='segment'
         )
 
@@ -110,8 +110,8 @@ class YoloNode(Node):
         # 동일 객체 연속 감지 횟수
         self.same_object_count = 0
 
-        # 총 3프레임 동안 유지되어야 함
-        self.required_frames = 3
+        # 총 x프레임 동안 유지되어야 함
+        self.required_frames = 2
 
         # 최초 객체 중심으로부터 허용 거리
         self.center_distance_threshold = 50.0
@@ -183,9 +183,9 @@ class YoloNode(Node):
         # 최초 객체와 현재 객체 거리 계산
         # ---------------------------------
 
-        distance = np.linalg.norm(
-            current_center - self.first_center
-        )
+        # distance = np.linalg.norm(
+        #     current_center - self.first_center
+        # )
 
         # ---------------------------------
         # 최초 객체 기준 동일성 판단
@@ -193,7 +193,7 @@ class YoloNode(Node):
 
         if (
             cls_id == self.first_cls_id
-            and distance < self.center_distance_threshold
+            # and distance < self.center_distance_threshold
         ):
 
             # 동일 객체로 판단
@@ -210,7 +210,7 @@ class YoloNode(Node):
             self.same_object_count = 1
 
         # ---------------------------------
-        # 3프레임 이상 유지 여부
+        # x프레임 이상 유지 여부
         # ---------------------------------
 
         return (
@@ -335,9 +335,10 @@ class YoloNode(Node):
         # Background
         # =====================================
 
-        if self.pred_class == 0:
+        if self.pred_class == 100:
 
-            msg_data.id = -1
+       
+            msg_data.id = 1
             msg_data.confidence = 0.0
             msg_data.coord = [
                 0.0,
@@ -437,7 +438,7 @@ class YoloNode(Node):
                     )
 
                     # -------------------------
-                    # 3프레임 조건 만족
+                    # x프레임 조건 만족
                     # -------------------------
 
                     if is_stable:
@@ -461,7 +462,7 @@ class YoloNode(Node):
                         )
 
                     # -------------------------
-                    # 아직 3프레임 미만
+                    # 아직 x프레임 미만
                     # -------------------------
 
                     else:

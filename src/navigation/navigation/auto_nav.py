@@ -42,7 +42,7 @@ class AutoNav(Node):
             self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
 
         self.trigger_pantilt_movement(151)
-        self.trigger_servo_movement(0, 0)
+        # self.trigger_servo_movement(0, 0)
 
         self.waypoints = []
         self.current_idx = 0
@@ -212,9 +212,16 @@ class AutoNav(Node):
 
     def object_callback(self, msg):
         if msg.id == -1:
+            # if self.object_found:
+            #     self.object_found = False
+            #     self.trigger_servo_movement(0, 0)
+
+            # else:
+            #     return
             return
 
         self.nearest_target_y_up = float(getattr(msg, 'max_y_up', 0))
+
 
         if self.object_found:
             return
