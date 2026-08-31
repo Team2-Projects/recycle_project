@@ -55,9 +55,19 @@ class YoloNode(Node):
         
         self.srv = self.create_service(SetTracking, 'set_tracking_mode', self.srv_callback)
 
-        self.target_idx = 0;
-        self.pred_class = 0;
+        
+        self.target_idx = 0
+        self.pred_class = 0
 
+        # 객체 연속 감지 확인용
+        self.prev_cls_id = -1
+        self.prev_center = None
+        self.same_object_count = 0
+
+        # 동일 객체 판단 기준
+        self.required_frames = 3
+        # cur_obj - prev_obj < 50.0pixel: same things
+        self.center_distance_threshold = 50.0
         # 웹으로 이미지 전달
         self.last_image_publish_time = 0.0
 
@@ -72,6 +82,51 @@ class YoloNode(Node):
             '/yolo/image/compressed',
             image_qos
         )
+
+        self.pr
+
+    def is_same_object(self, cls_id, coord):
+        """
+        이전 프레임 객체와 현재 객체가 같은 객체인지 판단
+
+        coord = [x_center, y_center, width, height]
+        """
+
+        current_center = np.array([
+            coord[0],
+            coord[1]
+        ])
+
+        # 이전 객체가 없는 경우
+        if self.prev_center is None:
+            self.prev_cls_id = cls_id
+            self.prev_center = current_center
+            self.same_object_count = 1
+
+            return False
+
+        # 중심 좌표 거리 계산
+        distance = np.linalg.norm(
+            current_center - self.prev_center
+        )
+
+        # 클래스가 같고 중심 좌표가 가까우면
+        if (
+            cls_id == self.prev_cls_id
+            and distance < self.center_distance_threshold
+        ):
+            self.same_object_count += 1
+
+        else:
+            # 다른 객체라고 판단 → 다시 1부터 시작
+            self.same_object_count = 1
+
+        # 현재 객체 정보 저장
+        self.prev_cls_id = cls_id
+        self.prev_center = current_center
+
+        # 3프레임 이상 연속 감지되었는지
+        return self.same_object_count >= self.required_frames
 
     def publish_image(self, frame):
         now = time.time()
@@ -127,10 +182,16 @@ class YoloNode(Node):
         self.pred_class = np.argmax(result[0])
 
         if self.pred_class == 0:
-            
+
             msg_data.id = -1
             msg_data.confidence = 0.0
             msg_data.coord = [0.0, 0.0, 0.0, 0.0]
+            msg_data.max_y_up = 0.0
+
+            self.prev_cls_id = -1
+            self.prev_center = None
+            self.same_object_count = 0
+            
         if self.pred_class != 0:
             results = self.model.predict(source=frame, imgsz=640, conf=conf_val, verbose=False)
             res = results[0]
@@ -147,26 +208,38 @@ class YoloNode(Node):
                 best_coord = res.boxes.xywh[self.target_idx].tolist()
                     
                 if best_name in object_id:
-                    msg_data.id = object_id[best_name]
-                    msg_data.confidence = confidences[self.target_idx]
-                    msg_data.coord = [float(x) for x in best_coord]
-                    msg_data.max_y_up = best_coord[1] - 0.5*best_coord[3]
-                    # x,y,w,h = best_coord
-                    # pt1_x = int(x - (w/2))
-                    # pt1_y = int(y - (h/2))
-                    # pt2_x = int(x + (w/2))
-                    # pt2_y = int(y + (h/2))
 
-                    # org_x = pt1_x - 5
-                    # org_y = pt1_y - 5
-                    
-                    # cv2.rectangle(frame, (pt1_x, pt1_y), (pt2_x, pt2_y), (0, 40, 200), 3)
-                    # cv2.putText(frame, best_name, (org_x, org_y), cv2.FONT_HERSHEY_SIMPLEX, fontScale = 2, thickness = 3, color = (255, 0, 0))
+                    current_cls_id = object_id[best_name]
+
+                    # 현재 객체가 이전 프레임 객체와 같은지 확인
+                    is_stable = self.is_same_object(
+                        current_cls_id,
+                        best_coord
+                    )
+
+                    if is_stable:
+                        # 3프레임 이상 같은 객체 → 정상 발행
+                        msg_data.id = current_cls_id
+                        msg_data.confidence = confidences[self.target_idx]
+                        msg_data.coord = [float(x) for x in best_coord]
+                        msg_data.max_y_up = best_coord[1] - 0.5 * best_coord[3]
+
+                    else:
+                        # 아직 3프레임 연속 조건 미충족
+                        msg_data.id = -1
+                        msg_data.confidence = 0.0
+                        msg_data.coord = [0.0, 0.0, 0.0, 0.0]
+                        msg_data.max_y_up = 0.0
                 else:
                     msg_data.id = -1
                     msg_data.confidence = 0.0
                     msg_data.coord = [0.0, 0.0, 0.0, 0.0]
-                    msg_data.max_y_up = 0
+                    msg_data.max_y_up = 0.0
+
+                    # 연속 객체 정보 초기화
+                    self.prev_cls_id = -1
+                    self.prev_center = None
+                    self.same_object_count = 0
            
 
         self.publisher_.publish(msg_data)
