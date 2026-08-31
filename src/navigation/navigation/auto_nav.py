@@ -17,7 +17,7 @@ from navigation_interface.action import RecycleActionMsg
 from navigation_interface.srv import ControlServo
 from navigation_interface.srv import ControlPantilt
 
-object_name = {0: 'can', 1: 'paper', 2: 'plastic'}
+object_name = {0: 'can', 1: 'paper', 2: 'plastic', 3: 'trash', 4: 'glass_bottle', 5: 'person'}
 
 class AutoNav(Node):
 
@@ -103,6 +103,7 @@ class AutoNav(Node):
 
         self.publish_robot_state("state", "Running")
         self.publish_robot_task("PATROL_START", "순찰 시작", "", "Task")
+        self.trigger_servo_movement(0, 0)
 
         self.get_logger().info('AutoNav Ready with Multi-collection, Motor, and Web UI integration.')
 
@@ -306,8 +307,6 @@ class AutoNav(Node):
         self.collected_count += 1
         self.get_logger().info(f'📦 물품 수거 성공! (현재 수거량: {self.collected_count})')
         
-        self.object_found = False
-        
         self.get_logger().info('⏳ 3초간 수거함 상태 확인 중...')
         self.check_timer = self.create_timer(3.0, self.check_recycle_condition_callback)
 
@@ -315,7 +314,7 @@ class AutoNav(Node):
         self.check_timer.cancel()
         self.destroy_timer(self.check_timer)
 
-        if 0 <= self.nearest_target_y_up <= 120:
+        if 0 <= self.nearest_target_y_up <= 180:
             self.object_found = True  
             self.get_logger().info(f'🗑️ 수거함 포화 감지 (y_up: {self.nearest_target_y_up:.1f})! HOME으로 이동합니다.')
             self.trigger_pantilt_movement(151)
