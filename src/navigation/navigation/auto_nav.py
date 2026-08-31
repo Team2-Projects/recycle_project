@@ -11,8 +11,7 @@ import json
 import time
 import math
 
-from my_yolo_cpp_pkg import detected_object_id
-from my_yolo_cpp_pkg import classify_yolo_infomation
+from my_yolo_msgs.msg import DetectedObject
 from navigation_interface.action import RecycleActionMsg
 from navigation_interface.srv import ControlServo
 from navigation_interface.srv import ControlPantilt
@@ -41,6 +40,9 @@ class AutoNav(Node):
         self.pantilt_client = self.create_client(ControlPantilt, 'control_pantilt')
         while not self.pantilt_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
+
+        self.trigger_pantilt_movement(151)
+        self.trigger_servo_movement(0, 0)
 
         self.waypoints = []
         self.current_idx = 0
@@ -76,7 +78,7 @@ class AutoNav(Node):
         self.create_subscription(Path, '/coverage_path', self.path_callback, latched_qos)
         
         self.object_sub = self.create_subscription(
-            classify_yolo_infomation.DetectedObject,
+            DetectedObject,
             '/classified_detected_object_info',
             self.object_callback,
             10
@@ -103,8 +105,7 @@ class AutoNav(Node):
 
         self.publish_robot_state("state", "Running")
         self.publish_robot_task("PATROL_START", "순찰 시작", "", "Task")
-        self.trigger_servo_movement(0, 0)
-
+    
         self.get_logger().info('AutoNav Ready with Multi-collection, Motor, and Web UI integration.')
 
     def trigger_servo_movement(self, angle1, angle2):

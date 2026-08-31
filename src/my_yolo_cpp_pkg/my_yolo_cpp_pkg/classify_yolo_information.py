@@ -16,7 +16,7 @@ from rclpy.qos import (
 )
 
 # 변환된 OpenVINO 모델 xml 파일 경로
-model_path = '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0829classify_model_openvino/classify_model.xml'
+model_path = '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0829classify_model_openvino/classify_model.xml'
 object_id = {
     'can': 0,
     'paper': 1,
@@ -32,10 +32,10 @@ class YoloNode(Node):
         
         self.frame_count = 0
         self.is_tracking = False 
-        self.declare_parameter('conf_threshold', 0.25)
+        self.declare_parameter('conf_threshold', 0.50)
 
         self.model = YOLO(
-    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
+    '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
     task='segment'
 )
         
@@ -166,7 +166,13 @@ class YoloNode(Node):
                     msg_data.id = -1
                     msg_data.confidence = 0.0
                     msg_data.coord = [0.0, 0.0, 0.0, 0.0]
-                    msg_data.max_y_up = 0
+                    msg_data.max_y_up = 0.0
+            
+            else:
+                    msg_data.id = -1
+                    msg_data.confidence = 0.0
+                    msg_data.coord = [0.0, 0.0, 0.0, 0.0]
+                    msg_data.max_y_up = 0.0
            
 
         self.publisher_.publish(msg_data)
