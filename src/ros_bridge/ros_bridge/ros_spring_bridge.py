@@ -27,7 +27,9 @@ class SpringBridge(Node):
         super().__init__('spring_bridge')
 
         self.ws = websocket.WebSocket()
-        self.ws.connect("ws://192.168.0.58:8080/robot")
+        self.ws.connect("ws://192.168.0.16:8080/robot")
+
+        self.should_shutdown = False
 
         # battery
         self.latest_battery = None
@@ -147,6 +149,11 @@ class SpringBridge(Node):
             self.get_logger().error(
                 f"WebSocket send error: {e}"
             )
+            self.get_logger().error(
+                "웹 서버 연결이 끊겨 ROS 노드를 종료합니다."
+            )
+
+            self.should_shutdown = True
 
     def normalize_angle(self, angle):
         while angle > math.pi:
@@ -349,9 +356,27 @@ class SpringBridge(Node):
 def main():
     rclpy.init()
     node = SpringBridge()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+
+    try:
+        while rclpy.ok() and not node.should_shutdown:
+            rclpy.spin_once(
+                node,
+                timeout_sec=0.1
+            )
+
+    except KeyboardInterrupt:
+        node.get_logger().info("SIGINT 수신 - CommandBridge 종료")
+        
+    finally:
+        try:
+            node.ws.close()
+        except Exception:
+            pass
+
+        node.destroy_node()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
