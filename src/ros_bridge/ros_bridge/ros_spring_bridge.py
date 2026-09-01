@@ -20,7 +20,7 @@ import math
 import psutil 
 import time
 
-object_name = {0: 'can', 1: 'paper', 2: 'plastic', 3: 'trash', 4: 'glass_bottle', 5: 'person'}
+object_name = {0: 'can', 1: 'paper', 2: 'plastic', 3: 'trash', 4: 'person'}
 class SpringBridge(Node):
 
     def __init__(self):
