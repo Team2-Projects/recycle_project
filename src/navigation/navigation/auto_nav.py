@@ -42,7 +42,7 @@ class AutoNav(Node):
             self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
 
         self.trigger_pantilt_movement(151)
-        # self.trigger_servo_movement(0, 0)
+        self.trigger_servo_movement(0, 0)
 
         self.waypoints = []
         self.current_idx = 0
@@ -103,8 +103,8 @@ class AutoNav(Node):
             10
         )
 
-        self.publish_robot_state("state", "Running")
-        self.publish_robot_task("PATROL_START", "순찰 시작", "", "Task")
+        self.publish_robot_state("state", "Starting")
+        self.publish_robot_task("PATROL_PREPARE", "순찰 준비", "", "Task")
     
         self.get_logger().info('AutoNav Ready with Multi-collection, Motor, and Web UI integration.')
 
@@ -209,6 +209,9 @@ class AutoNav(Node):
         self.is_running = True
         self.get_logger().info(f'Received {len(self.waypoints)} waypoints')
         self.send_next_goal()
+
+        self.publish_robot_state("state", "Running")
+        self.publish_robot_task("PATROL_START", "순찰 시작", "", "Task")
 
     def object_callback(self, msg):
         if msg.id == -1:

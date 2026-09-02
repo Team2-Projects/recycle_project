@@ -134,12 +134,29 @@ class SpringBridge(Node):
             10 
         )
 
+        # voice
+        self.subscription = self.create_subscription(
+            String,
+            'speech_to_text',
+            self.listener_callback,
+            10
+        )
+
         # system
         psutil.cpu_percent(interval=None)
         self.create_timer(
             3.0,
             self.send_system_usage
         )
+
+        self.status_timer = self.create_timer(
+            0.5,
+            self.send_current_robot_status
+        )
+
+    def is_auto_nav_alive(self):
+        node_names = self.get_node_names()
+        return 'auto_nav' in node_names
 
     def send_ws(self, data):
         try:
@@ -154,6 +171,16 @@ class SpringBridge(Node):
             )
 
             self.should_shutdown = True
+
+    def send_current_robot_status(self):
+        status = "Running" if self.is_auto_nav_alive() else "Stop"
+
+        self.send_ws({
+            "type": "robot_status",
+            "eventType": "state",
+            "status": status
+        })
+        self.destroy_timer(self.status_timer)
 
     def normalize_angle(self, angle):
         while angle > math.pi:
@@ -342,6 +369,15 @@ class SpringBridge(Node):
             self.get_logger().error(
                 f"robot_task error: {e}"
             )
+
+    def listener_callback(self, msg):
+        text = msg.data.strip()
+
+        data = {
+            "type": "voice_msg",
+            "msg": text
+        }
+        self.send_ws(data)
 
     def send_system_usage(self):
         data = {
