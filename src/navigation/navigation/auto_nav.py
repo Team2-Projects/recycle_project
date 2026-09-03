@@ -27,6 +27,7 @@ class AutoNav(Node):
         self.robot_status_pub = self.create_publisher(String, "/robot_status", 10)
         self.robot_task_pub = self.create_publisher(String, "/robot_task", 10)
         self.recycle_success_pub = self.create_publisher(String, "/recycle_success", 10)
+        self.schedule_status_pub = self.create_publisher(String, "/schedule_status", 10)
 
         self.publish_robot_state("state", "Starting")
         self.publish_robot_task("PATROL_PREPARE", "순찰 준비", "", "Task")
@@ -154,6 +155,13 @@ class AutoNav(Node):
             "status": status
         })
         self.robot_task_pub.publish(msg)
+
+    def publish_schedule_status(self, status):
+        msg = String()
+        msg.data = json.dumps({
+            "status": status
+        })
+        self.schedule_status_pub.publish(msg)
 
     def command_callback(self, msg):
         if msg.data == "STOP":
@@ -395,6 +403,7 @@ class AutoNav(Node):
             
             self.publish_robot_state("state", "Stop")
             self.publish_robot_task("PATROL_COMPLETE", "순찰 종료", "", "Task")
+            self.publish_schedule_status("COMPLETE")
             self.get_logger().info('🏁 Patrol finished. Shutting down...')
 
             if rclpy.ok():
@@ -443,6 +452,7 @@ class AutoNav(Node):
             if self.is_returning_home:
                 self.publish_robot_state("state", "Stop")
                 self.publish_robot_task("PATROL_COMPLETE", "순찰 종료", "", "Task")
+                self.publish_schedule_status("CANCEL")
                 self.get_logger().info('HOME 복귀 완료')
                 if rclpy.ok():
                     rclpy.shutdown()

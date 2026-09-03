@@ -134,6 +134,14 @@ class SpringBridge(Node):
             10 
         )
 
+        # schedule_status
+        self.create_subscription(
+            String,
+            "/schedule_status",
+            self.schedule_status_callback,
+            10
+        )
+
         # voice
         self.subscription = self.create_subscription(
             String,
@@ -387,6 +395,18 @@ class SpringBridge(Node):
         except Exception as e:
             self.get_logger().error(
                 f"robot_task error: {e}"
+            )
+    
+    def schedule_status_callback(self, msg):
+        try:
+            event = json.loads(msg.data)
+            event["type"] = "schedule_status"
+
+            self.send_ws(event)
+
+        except Exception as e:
+            self.get_logger().error(
+                f"schedule_status error: {e}"
             )
 
     def listener_callback(self, msg):
