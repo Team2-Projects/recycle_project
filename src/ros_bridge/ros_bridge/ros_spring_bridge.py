@@ -66,20 +66,6 @@ class SpringBridge(Node):
             self.send_robot_pose
         )
 
-        # goal
-        goal_qos = QoSProfile(
-            depth=1,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            reliability=ReliabilityPolicy.RELIABLE
-        )
-
-        self.subscription_goal = self.create_subscription(
-            PoseStamped,
-            '/navigation_goal',
-            self.goal_callback,
-            goal_qos
-        )
-
         # path
         self.subscription_path = self.create_subscription(
             Path,
@@ -306,17 +292,6 @@ class SpringBridge(Node):
             self.get_logger().warn(
                 f"TF error: {e}"
             )
-
-    def goal_callback(self, msg):
-        data = {
-            "type": "navigation_goal",
-            "x": msg.pose.position.x,
-            "y": msg.pose.position.y
-        }
-
-        self.ws.send(
-            json.dumps(data)
-        )
 
     def path_callback(self, msg):
         try:

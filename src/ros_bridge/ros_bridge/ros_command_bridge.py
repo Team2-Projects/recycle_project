@@ -97,10 +97,18 @@ class CommandBridge(Node):
             if rclpy.ok():
                 self.should_shutdown = True
 
+    def is_auto_nav_alive(self):
+        node_names = self.get_node_names()
+
+        return any(
+            name.strip('/') == 'auto_nav'
+            for name in node_names
+        )
+    
     def start_navigation(self):
-        if self.launch_process is not None:
-            self.get_logger().info(
-                "Already running"
+        if self.is_auto_nav_alive():
+            self.get_logger().warn(
+                "auto_nav already running"
             )
             return
 

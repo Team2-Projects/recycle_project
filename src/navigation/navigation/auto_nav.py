@@ -43,12 +43,12 @@ class AutoNav(Node):
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
         self.servo_client = self.create_client(ControlServo, 'control_servo')
-        while not self.servo_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Waiting for servo service on Raspberry Pi...')
+        # while not self.servo_client.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('Waiting for servo service on Raspberry Pi...')
 
         self.pantilt_client = self.create_client(ControlPantilt, 'control_pantilt')
-        while not self.pantilt_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
+        # while not self.pantilt_client.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
 
         self.trigger_pantilt_movement(151)
         self.trigger_servo_movement(0, 0)
@@ -92,13 +92,6 @@ class AutoNav(Node):
             self.object_callback,
             10
         )
-
-        goal_qos = QoSProfile(
-            depth=1,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            reliability=ReliabilityPolicy.RELIABLE
-        )
-        self.goal_pub = self.create_publisher(PoseStamped, '/navigation_goal', goal_qos)
 
         self.command_sub = self.create_subscription(
             String,
@@ -164,6 +157,7 @@ class AutoNav(Node):
         self.schedule_status_pub.publish(msg)
 
     def command_callback(self, msg):
+        self.publish_schedule_status("CANCEL")
         if msg.data == "STOP":
             self.cancel_reason = "STOP"
         elif msg.data == "BATTERY_LOW":
@@ -421,8 +415,6 @@ class AutoNav(Node):
         pose.pose.position.y = y
         pose.pose.orientation.w = 1.0
 
-        self.goal_pub.publish(pose)
-
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = pose
 
@@ -452,7 +444,6 @@ class AutoNav(Node):
             if self.is_returning_home:
                 self.publish_robot_state("state", "Stop")
                 self.publish_robot_task("PATROL_COMPLETE", "순찰 종료", "", "Task")
-                self.publish_schedule_status("CANCEL")
                 self.get_logger().info('HOME 복귀 완료')
                 if rclpy.ok():
                     rclpy.shutdown()
