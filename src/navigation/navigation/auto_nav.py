@@ -22,6 +22,14 @@ class AutoNav(Node):
 
     def __init__(self):
         super().__init__('auto_nav')
+
+        self.object_found_pub = self.create_publisher(String, "/object_found", 10)
+        self.robot_status_pub = self.create_publisher(String, "/robot_status", 10)
+        self.robot_task_pub = self.create_publisher(String, "/robot_task", 10)
+        self.recycle_success_pub = self.create_publisher(String, "/recycle_success", 10)
+
+        self.publish_robot_state("state", "Starting")
+        self.publish_robot_task("PATROL_PREPARE", "순찰 준비", "", "Task")
         
         self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._recycle_client = ActionClient(self, RecycleActionMsg, 'recycle_action')
@@ -84,11 +92,6 @@ class AutoNav(Node):
             10
         )
 
-        self.object_found_pub = self.create_publisher(String, "/object_found", 10)
-        self.robot_status_pub = self.create_publisher(String, "/robot_status", 10)
-        self.robot_task_pub = self.create_publisher(String, "/robot_task", 10)
-        self.recycle_success_pub = self.create_publisher(String, "/recycle_success", 10)
-
         goal_qos = QoSProfile(
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -102,9 +105,6 @@ class AutoNav(Node):
             self.command_callback,
             10
         )
-
-        self.publish_robot_state("state", "Starting")
-        self.publish_robot_task("PATROL_PREPARE", "순찰 준비", "", "Task")
     
         self.get_logger().info('AutoNav Ready with Multi-collection, Motor, and Web UI integration.')
 

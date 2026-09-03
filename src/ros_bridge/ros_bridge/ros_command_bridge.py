@@ -15,7 +15,7 @@ class CommandBridge(Node):
 
         # Spring WebSocket 연결
         self.ws = websocket.WebSocket()
-        self.ws.connect("ws://192.168.0.16:8080/robot_command")
+        self.ws.connect("ws://192.168.0.58:8080/robot_command")
 
         self.should_shutdown = False
 
@@ -110,7 +110,8 @@ class CommandBridge(Node):
                 "launch",
                 "navigation",
                 "navigation.launch.py"
-            ]
+            ],
+            start_new_session=True
         )
 
         self.get_logger().info(

@@ -27,7 +27,7 @@ class SpringBridge(Node):
         super().__init__('spring_bridge')
 
         self.ws = websocket.WebSocket()
-        self.ws.connect("ws://192.168.0.16:8080/robot")
+        self.ws.connect("ws://192.168.0.58:8080/robot")
 
         self.should_shutdown = False
 
@@ -149,6 +149,8 @@ class SpringBridge(Node):
             self.send_system_usage
         )
 
+        self.status_check_count = 0
+
         self.status_timer = self.create_timer(
             0.5,
             self.send_current_robot_status
@@ -156,7 +158,9 @@ class SpringBridge(Node):
 
     def is_auto_nav_alive(self):
         node_names = self.get_node_names()
-        return 'auto_nav' in node_names
+        return (
+            'auto_nav' in node_names or '/auto_nav' in node_names
+        )
 
     def send_ws(self, data):
         try:
@@ -173,14 +177,29 @@ class SpringBridge(Node):
             self.should_shutdown = True
 
     def send_current_robot_status(self):
-        status = "Running" if self.is_auto_nav_alive() else "Stop"
+        self.status_check_count += 1
 
-        self.send_ws({
-            "type": "robot_status",
-            "eventType": "state",
-            "status": status
-        })
-        self.destroy_timer(self.status_timer)
+        if self.is_auto_nav_alive():
+
+            self.send_ws({
+                "type": "robot_status",
+                "eventType": "state",
+                "status": "Running"
+            })
+
+            self.destroy_timer(self.status_timer)
+            return
+
+        # 3번까지 확인
+        if self.status_check_count >= 3:
+
+            self.send_ws({
+                "type": "robot_status",
+                "eventType": "state",
+                "status": "Stop"
+            })
+
+            self.destroy_timer(self.status_timer)
 
     def normalize_angle(self, angle):
         while angle > math.pi:
