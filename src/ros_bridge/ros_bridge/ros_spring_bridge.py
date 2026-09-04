@@ -20,7 +20,7 @@ import math
 import psutil 
 import time
 
-object_name = {0: 'can', 1: 'paper', 2: 'plastic', 3: 'trash', 4: 'glass_bottle', 5: 'person'}
+object_name = {0: 'can', 1: 'paper', 2: 'plastic', 3: 'trash', 4: 'person'}
 class SpringBridge(Node):
 
     def __init__(self):
@@ -28,6 +28,8 @@ class SpringBridge(Node):
 
         self.ws = websocket.WebSocket()
         self.ws.connect("ws://192.168.0.58:8080/robot")
+
+        self.should_shutdown = False
 
         # battery
         self.latest_battery = None
@@ -62,20 +64,6 @@ class SpringBridge(Node):
         self.create_timer(
             0.5,
             self.send_robot_pose
-        )
-
-        # goal
-        goal_qos = QoSProfile(
-            depth=1,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            reliability=ReliabilityPolicy.RELIABLE
-        )
-
-        self.subscription_goal = self.create_subscription(
-            PoseStamped,
-            '/navigation_goal',
-            self.goal_callback,
-            goal_qos
         )
 
         # path
@@ -132,11 +120,40 @@ class SpringBridge(Node):
             10 
         )
 
+        # schedule_status
+        self.create_subscription(
+            String,
+            "/schedule_status",
+            self.schedule_status_callback,
+            10
+        )
+
+        # voice
+        self.subscription = self.create_subscription(
+            String,
+            'speech_to_text',
+            self.listener_callback,
+            10
+        )
+
         # system
         psutil.cpu_percent(interval=None)
         self.create_timer(
             3.0,
             self.send_system_usage
+        )
+
+        self.status_check_count = 0
+
+        self.status_timer = self.create_timer(
+            0.5,
+            self.send_current_robot_status
+        )
+
+    def is_auto_nav_alive(self):
+        node_names = self.get_node_names()
+        return (
+            'auto_nav' in node_names or '/auto_nav' in node_names
         )
 
     def send_ws(self, data):
@@ -147,6 +164,36 @@ class SpringBridge(Node):
             self.get_logger().error(
                 f"WebSocket send error: {e}"
             )
+            self.get_logger().error(
+                "웹 서버 연결이 끊겨 ROS 노드를 종료합니다."
+            )
+
+            self.should_shutdown = True
+
+    def send_current_robot_status(self):
+        self.status_check_count += 1
+
+        if self.is_auto_nav_alive():
+
+            self.send_ws({
+                "type": "robot_status",
+                "eventType": "state",
+                "status": "Running"
+            })
+
+            self.destroy_timer(self.status_timer)
+            return
+
+        # 3번까지 확인
+        if self.status_check_count >= 3:
+
+            self.send_ws({
+                "type": "robot_status",
+                "eventType": "state",
+                "status": "Stop"
+            })
+
+            self.destroy_timer(self.status_timer)
 
     def normalize_angle(self, angle):
         while angle > math.pi:
@@ -246,17 +293,6 @@ class SpringBridge(Node):
                 f"TF error: {e}"
             )
 
-    def goal_callback(self, msg):
-        data = {
-            "type": "navigation_goal",
-            "x": msg.pose.position.x,
-            "y": msg.pose.position.y
-        }
-
-        self.ws.send(
-            json.dumps(data)
-        )
-
     def path_callback(self, msg):
         try:
             path = []
@@ -335,6 +371,27 @@ class SpringBridge(Node):
             self.get_logger().error(
                 f"robot_task error: {e}"
             )
+    
+    def schedule_status_callback(self, msg):
+        try:
+            event = json.loads(msg.data)
+            event["type"] = "schedule_status"
+
+            self.send_ws(event)
+
+        except Exception as e:
+            self.get_logger().error(
+                f"schedule_status error: {e}"
+            )
+
+    def listener_callback(self, msg):
+        text = msg.data.strip()
+
+        data = {
+            "type": "voice_msg",
+            "msg": text
+        }
+        self.send_ws(data)
 
     def send_system_usage(self):
         data = {
@@ -349,9 +406,27 @@ class SpringBridge(Node):
 def main():
     rclpy.init()
     node = SpringBridge()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+
+    try:
+        while rclpy.ok() and not node.should_shutdown:
+            rclpy.spin_once(
+                node,
+                timeout_sec=0.1
+            )
+
+    except KeyboardInterrupt:
+        node.get_logger().info("SIGINT 수신 - CommandBridge 종료")
+        
+    finally:
+        try:
+            node.ws.close()
+        except Exception:
+            pass
+
+        node.destroy_node()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

@@ -16,12 +16,21 @@ from navigation_interface.action import RecycleActionMsg
 from navigation_interface.srv import ControlServo
 from navigation_interface.srv import ControlPantilt
 
-object_name = {0: 'can', 1: 'paper', 2: 'plastic', 3: 'trash', 4: 'glass_bottle', 5: 'person'}
+object_name = {0: 'can', 1: 'paper', 2: 'plastic', 3: 'trash', 4: 'person'}
 
 class AutoNav(Node):
 
     def __init__(self):
         super().__init__('auto_nav')
+
+        self.object_found_pub = self.create_publisher(String, "/object_found", 10)
+        self.robot_status_pub = self.create_publisher(String, "/robot_status", 10)
+        self.robot_task_pub = self.create_publisher(String, "/robot_task", 10)
+        self.recycle_success_pub = self.create_publisher(String, "/recycle_success", 10)
+        self.schedule_status_pub = self.create_publisher(String, "/schedule_status", 10)
+
+        self.publish_robot_state("state", "Starting")
+        self.publish_robot_task("PATROL_PREPARE", "순찰 준비", "", "Task")
         
         self._action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self._recycle_client = ActionClient(self, RecycleActionMsg, 'recycle_action')
@@ -42,7 +51,7 @@ class AutoNav(Node):
             self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
 
         self.trigger_pantilt_movement(151)
-        # self.trigger_servo_movement(0, 0)
+        self.trigger_servo_movement(0, 0)
 
         self.waypoints = []
         self.current_idx = 0
@@ -84,27 +93,12 @@ class AutoNav(Node):
             10
         )
 
-        self.object_found_pub = self.create_publisher(String, "/object_found", 10)
-        self.robot_status_pub = self.create_publisher(String, "/robot_status", 10)
-        self.robot_task_pub = self.create_publisher(String, "/robot_task", 10)
-        self.recycle_success_pub = self.create_publisher(String, "/recycle_success", 10)
-
-        goal_qos = QoSProfile(
-            depth=1,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
-            reliability=ReliabilityPolicy.RELIABLE
-        )
-        self.goal_pub = self.create_publisher(PoseStamped, '/navigation_goal', goal_qos)
-
         self.command_sub = self.create_subscription(
             String,
             "/navigation_command",
             self.command_callback,
             10
         )
-
-        self.publish_robot_state("state", "Running")
-        self.publish_robot_task("PATROL_START", "순찰 시작", "", "Task")
     
         self.get_logger().info('AutoNav Ready with Multi-collection, Motor, and Web UI integration.')
 
@@ -155,7 +149,15 @@ class AutoNav(Node):
         })
         self.robot_task_pub.publish(msg)
 
+    def publish_schedule_status(self, status):
+        msg = String()
+        msg.data = json.dumps({
+            "status": status
+        })
+        self.schedule_status_pub.publish(msg)
+
     def command_callback(self, msg):
+        self.publish_schedule_status("CANCEL")
         if msg.data == "STOP":
             self.cancel_reason = "STOP"
         elif msg.data == "BATTERY_LOW":
@@ -209,6 +211,9 @@ class AutoNav(Node):
         self.is_running = True
         self.get_logger().info(f'Received {len(self.waypoints)} waypoints')
         self.send_next_goal()
+
+        self.publish_robot_state("state", "Running")
+        self.publish_robot_task("PATROL_START", "순찰 시작", "", "Task")
 
     def object_callback(self, msg):
         if msg.id == -1:
@@ -392,6 +397,7 @@ class AutoNav(Node):
             
             self.publish_robot_state("state", "Stop")
             self.publish_robot_task("PATROL_COMPLETE", "순찰 종료", "", "Task")
+            self.publish_schedule_status("COMPLETE")
             self.get_logger().info('🏁 Patrol finished. Shutting down...')
 
             if rclpy.ok():
@@ -408,8 +414,6 @@ class AutoNav(Node):
         pose.pose.position.x = x
         pose.pose.position.y = y
         pose.pose.orientation.w = 1.0
-
-        self.goal_pub.publish(pose)
 
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = pose

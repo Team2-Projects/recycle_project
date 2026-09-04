@@ -34,14 +34,16 @@ class CoveragePlanner(Node):
         self.home_y = -1.5
 
         waypoints = [
-            (1.0, -2.5), # 오른쪽 중간
-            (0.6, -0.5), # 왼쪽 중간
-            (2.8, -0.5), # 왼쪽 위
+            (0.6, -2.3), # 오른쪽 아래
+            (0.8, -0.5), # 왼쪽 중간
+            (2.6, -0.5), # 왼쪽 위
             (2.9, -2.5), # 오른쪽 위
+            (1.8, -2.5), # 오른쪽 중간
+            (0.9, -2.5), # 오른쪽 아래
             (self.home_x, self.home_y)
         ]
 
-        labels = ['1', '2', '3', '4', '5', 'HOME']
+        labels = ['1', '2', '3', '4', '5', '6', 'HOME']
         for lbl, (wx, wy) in zip(labels, waypoints):
             self.get_logger().info(f'  [{lbl}] ({wx:.2f}, {wy:.2f})')
 

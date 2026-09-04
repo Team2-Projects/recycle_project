@@ -17,6 +17,8 @@ class CommandBridge(Node):
         self.ws = websocket.WebSocket()
         self.ws.connect("ws://192.168.0.58:8080/robot_command")
 
+        self.should_shutdown = False
+
         self.get_logger().info(
             "Command Bridge Connected"
         )
@@ -88,11 +90,25 @@ class CommandBridge(Node):
             self.get_logger().error(
                 str(e)
             )
+            self.get_logger().error(
+                "웹 서버 연결이 끊겨 CommandBridge를 종료합니다."
+            )
 
+            if rclpy.ok():
+                self.should_shutdown = True
+
+    def is_auto_nav_alive(self):
+        node_names = self.get_node_names()
+
+        return any(
+            name.strip('/') == 'auto_nav'
+            for name in node_names
+        )
+    
     def start_navigation(self):
-        if self.launch_process is not None:
-            self.get_logger().info(
-                "Already running"
+        if self.is_auto_nav_alive():
+            self.get_logger().warn(
+                "auto_nav already running"
             )
             return
 
@@ -102,7 +118,8 @@ class CommandBridge(Node):
                 "launch",
                 "navigation",
                 "navigation.launch.py"
-            ]
+            ],
+            start_new_session=True
         )
 
         self.get_logger().info(
@@ -125,9 +142,27 @@ class CommandBridge(Node):
 def main():
     rclpy.init()
     node = CommandBridge()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+
+    try:
+        while rclpy.ok() and not node.should_shutdown:
+            rclpy.spin_once(
+                node,
+                timeout_sec=0.1
+            )
+            
+    except KeyboardInterrupt:
+        node.get_logger().info("SIGINT 수신 - CommandBridge 종료")
+
+    finally:
+        try:
+            node.ws.close()
+        except Exception:
+            pass
+
+        node.destroy_node()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
