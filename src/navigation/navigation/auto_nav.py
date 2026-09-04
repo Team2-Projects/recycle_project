@@ -43,12 +43,12 @@ class AutoNav(Node):
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
         self.servo_client = self.create_client(ControlServo, 'control_servo')
-        while not self.servo_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Waiting for servo service on Raspberry Pi...')
+        # while not self.servo_client.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('Waiting for servo service on Raspberry Pi...')
 
         self.pantilt_client = self.create_client(ControlPantilt, 'control_pantilt')
-        while not self.pantilt_client.wait_for_service(timeout_sec=1.0):
-            self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
+        # while not self.pantilt_client.wait_for_service(timeout_sec=1.0):
+        #     self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
 
         self.trigger_pantilt_movement(151)
         self.trigger_servo_movement(0, 0)
@@ -76,7 +76,12 @@ class AutoNav(Node):
 
         self.collected_count = 0         
         self.previous_object_id = None   
-        self.nearest_target_y_up = 0
+        self.nearest_target_y_up = None
+
+        self.abort_retry_count = 0
+        self.max_abort_retry = 3
+
+        self.stop_pending = False
 
         latched_qos = QoSProfile(
             depth=1,
@@ -157,13 +162,14 @@ class AutoNav(Node):
         self.schedule_status_pub.publish(msg)
 
     def command_callback(self, msg):
-        self.publish_schedule_status("CANCEL")
         if msg.data == "STOP":
             self.cancel_reason = "STOP"
         elif msg.data == "BATTERY_LOW":
             self.cancel_reason = "BATTERY_LOW"
         else:
             return
+
+        self.publish_schedule_status("CANCEL")
 
         if self.tracking_handle is not None:
             self.get_logger().info('Tracking Action 취소 요청')
@@ -179,6 +185,8 @@ class AutoNav(Node):
             self.get_logger().info('NavigateToPose 취소 요청')
             self.current_handle.cancel_goal_async()
             return
+
+        self.stop_pending = True
 
         self.get_logger().warn('현재 취소할 Action이 없습니다.')
 
@@ -201,6 +209,10 @@ class AutoNav(Node):
     def path_callback(self, msg):
         if self.is_running:
             self.get_logger().warn('Already navigating, ignoring new path')
+            return
+
+        if not msg.poses:
+            self.get_logger().error('수신된 경로에 waypoint가 없습니다.')
             return
 
         self.waypoints = [(p.pose.position.x, p.pose.position.y) for p in msg.poses]
@@ -294,6 +306,11 @@ class AutoNav(Node):
             return
 
         self.tracking_handle = goal_handle
+
+        if self.stop_pending:
+            self.stop_pending = False
+            self.tracking_handle.cancel_goal_async()
+
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self.recycle_tracking_result_callback)
 
@@ -320,6 +337,7 @@ class AutoNav(Node):
         self.collected_count += 1
         self.get_logger().info(f'📦 물품 수거 성공! (현재 수거량: {self.collected_count})')
         
+        self.nearest_target_y_up = None
         self.get_logger().info('⏳ 3초간 수거함 상태 확인 중...')
         self.check_timer = self.create_timer(3.0, self.check_recycle_condition_callback)
 
@@ -327,7 +345,7 @@ class AutoNav(Node):
         self.check_timer.cancel()
         self.destroy_timer(self.check_timer)
 
-        if 0 <= self.nearest_target_y_up <= 180:
+        if self.nearest_target_y_up is not None and 0 <= self.nearest_target_y_up <= 180:
             self.object_found = True  
             self.get_logger().info(f'🗑️ 수거함 포화 감지 (y_up: {self.nearest_target_y_up:.1f})! HOME으로 이동합니다.')
             self.trigger_pantilt_movement(151)
@@ -358,6 +376,11 @@ class AutoNav(Node):
             return
 
         self.recycle_handle = goal_handle
+
+        if self.stop_pending:
+            self.stop_pending = False
+            self.recycle_handle.cancel_goal_async()
+            
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self.recycle_result_callback)
 
@@ -375,6 +398,7 @@ class AutoNav(Node):
             self.get_logger().warn(f'Recycle 실패: {result.message}')
             self.publish_robot_task('OBJECT_PICKUP_FAIL', '분리수거 실패', '', 'Error')
             self.object_found = False
+            self.send_goal(self.resume_x, self.resume_y)
             return
 
         self.collected_count = 0
@@ -427,12 +451,26 @@ class AutoNav(Node):
     def goal_response_callback(self, future):
         goal_handle = future.result()
         if not goal_handle.accepted:
+            if self.is_returning_home:
+                self.get_logger().error('HOME Goal rejected!')
+                self.publish_robot_state("state", "Error")
+                return
+
             self.get_logger().warn('Goal rejected! Skipping.')
             self.current_idx += 1
             self.send_next_goal()
             return
 
         self.current_handle = goal_handle
+
+        if self.stop_pending:
+            self.stop_pending = False
+
+            self.get_logger().info(
+                '대기 중이던 STOP 요청 처리 → NavigateToPose 취소'
+            )
+
+            self.current_handle.cancel_goal_async()
         goal_handle.get_result_async().add_done_callback(self.result_callback)
 
     def result_callback(self, future):
@@ -441,6 +479,7 @@ class AutoNav(Node):
         self.current_handle = None
 
         if status == GoalStatus.STATUS_SUCCEEDED:
+            self.abort_retry_count = 0
             if self.is_returning_home:
                 self.publish_robot_state("state", "Stop")
                 self.publish_robot_task("PATROL_COMPLETE", "순찰 종료", "", "Task")
@@ -455,12 +494,33 @@ class AutoNav(Node):
                 return
             if self.cancel_reason == "OBJECT" and self.object_found:
                 self.get_logger().info('⚠️ 이동 취소됨 (물체 감지). recycle_tracking 호출')
+                self.cancel_reason = None
                 self.launch_recycle_tracking_action()
                 return
+            self.get_logger().warn(
+                '취소 원인을 확인할 수 없어 현재 waypoint를 재시도합니다.'
+            )
+            self.send_next_goal()
+            return
 
         if status == GoalStatus.STATUS_ABORTED:
-            self.get_logger().error("Goal Aborted by Nav2")
-            self.send_next_goal()
+            self.abort_retry_count += 1;
+            if self.abort_retry_count < self.max_abort_retry:
+                if self.is_returning_home:
+                    self.send_goal(self.home_x, self.home_y)
+                else:
+                    self.send_next_goal()
+            else:
+                if self.is_returning_home:
+                    self.get_logger().error('HOME Goal rejected!')
+                    self.publish_robot_state("state", "Error")
+                    return
+
+                self.get_logger().warn('Goal rejected! Skipping.')
+                self.abort_retry_count = 0
+                self.current_idx += 1
+                self.send_next_goal()
+
             return
 
         if self.current_idx < len(self.waypoints):

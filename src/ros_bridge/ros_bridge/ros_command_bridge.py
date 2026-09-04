@@ -59,43 +59,38 @@ class CommandBridge(Node):
 
     def receive_command(self):
         try:
-            # WebSocket 데이터 확인
             self.ws.settimeout(0.01)
             data = self.ws.recv()
-            if not data:
-                return
-
-            self.get_logger().info(
-                f"Received : {data}"
-            )
-
-            msg_json = json.loads(data)
-
-            if msg_json["type"] == "command":
-
-                command = msg_json["command"]
-                
-                self.get_logger().info(
-                    f"Publish command : {command}"
-                )
-                if command == "START":
-                    self.start_navigation()
-                elif command == "STOP":
-                    self.stop_navigation()
 
         except websocket.WebSocketTimeoutException:
-            pass
+            return
 
-        except Exception as e:
-            self.get_logger().error(
-                str(e)
-            )
-            self.get_logger().error(
-                "웹 서버 연결이 끊겨 CommandBridge를 종료합니다."
-            )
+        except Exception:
+            self.should_shutdown = True
+            return
 
-            if rclpy.ok():
-                self.should_shutdown = True
+        if not data:
+            return
+
+        self.get_logger().info(
+            f"Received : {data}"
+        )
+
+        try:
+            msg_json = json.loads(data)
+        except json.JSONDecodeError:
+            return
+        
+        if msg_json.get("type") != "command":
+            return
+
+        command = msg_json.get("command")
+
+        if command == "START":
+            self.start_navigation()
+
+        elif command == "STOP":
+            self.stop_navigation()
 
     def is_auto_nav_alive(self):
         node_names = self.get_node_names()
@@ -106,6 +101,12 @@ class CommandBridge(Node):
         )
     
     def start_navigation(self):
+        if self.launch_process is not None:
+            if self.launch_process.poll() is None:
+                self.get_logger().warn(
+                    "Navigation launch already running"
+                )
+                return
         if self.is_auto_nav_alive():
             self.get_logger().warn(
                 "auto_nav already running"
@@ -133,11 +134,10 @@ class CommandBridge(Node):
         self.cancel_pub.publish(msg)
 
     def battery_callback(self, msg):
-        msg = String()
-        msg.data = "BATTERY_LOW"
+        command_msg = String()
+        command_msg.data = "BATTERY_LOW"
 
-        self.cancel_pub.publish(msg)
-
+        self.cancel_pub.publish(command_msg)
 
 def main():
     rclpy.init()
