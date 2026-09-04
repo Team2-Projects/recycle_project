@@ -8,7 +8,7 @@ from my_interfaces.srv import AudioSpeech
 # OpenVINO 모델 및 파이프라인 로드용
 from optimum.intel.openvino import OVModelForSpeechSeq2Seq
 from transformers import AutoProcessor, pipeline
-from .intent_parser import IntentParser
+# from .intent_parser import IntentParser
 
 class AudioServerNode(Node):
     def __init__(self):
@@ -25,9 +25,7 @@ class AudioServerNode(Node):
 
 
         # 로컬 PC 내 모델 저장 경로
-        model_dir = os.path.expanduser('~/ros2_study/src/speech_recognition/models/whisper_tiny_openvino')
-
-        self.intent_parser = IntentParser()
+        model_dir = os.path.expanduser('~/turtlebot3_ws/src/speech_recognition/models/whisper_tiny_openvino')
 
         try:
             self.model = OVModelForSpeechSeq2Seq.from_pretrained(model_dir)
@@ -90,9 +88,6 @@ class AudioServerNode(Node):
                 if extracted_text:
                     msg = String()
                     msg.data = extracted_text
-
-                    ## -->need to be transform.
-                    msg.data = self.intent_parser.parse(msg.data)
                     self.publisher.publish(msg)
 
                 response.success = True

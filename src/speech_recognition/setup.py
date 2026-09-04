@@ -13,9 +13,25 @@ data_files = [
 ]
 
 if model_files:
-    data_files.append(
-        (os.path.join('share', package_name, 'models', 'whisper_tiny_openvino'), model_files)
-    )
+    data_files.extend([
+        (
+            os.path.join(
+                'share',
+                package_name,
+                'models',
+                'whisper_tiny_openvino'
+            ),
+            model_files
+        ),
+        (
+            os.path.join(
+                'share',
+                package_name,
+                'launch'
+            ),
+            glob('launch/*.launch.py')
+        )
+    ])
 
 setup(
     name=package_name,
