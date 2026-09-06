@@ -419,18 +419,37 @@ class Recycle(Node):
         req.angle2 = float(angle2)
         self.servo_future = self.servo_client.call_async(req)
 
-    async def move_backward(self, goal_handle, target_x: float, target_y: float, speed: float = 0.08):
+    async def move_backward(
+    self,
+    goal_handle,
+    target_x: float,
+    target_y: float,
+    speed: float = 0.08
+    ):
         msg = Twist()
-        msg.linear.x = -abs(speed)
-        msg.angular.z = 0.0
+
+        tolerance = 0.05
 
         try:
+            start_time = self.get_clock().now()
+
             while rclpy.ok():
+
+                elapsed = (
+                    self.get_clock().now() - start_time
+                ).nanoseconds / 1e9
+
+                if elapsed > 5.0:
+                    self.get_logger().error("❌ 후진 시간 초과")
+                    self.stop_robot()
+                    return False
+
                 if goal_handle.is_cancel_requested:
                     self.stop_robot()
                     return False
 
                 current_pose = self.get_current_pose()
+
                 if current_pose is None:
                     self.stop_robot()
                     await self._sleep(0.05)
@@ -438,13 +457,44 @@ class Recycle(Node):
 
                 current_x, current_y, current_yaw = current_pose
 
-                if current_x >= target_x:
+                dx = target_x - current_x
+                dy = target_y - current_y
+
+                distance = math.sqrt(dx * dx + dy * dy)
+
+                # 목표점 도착
+                if distance <= tolerance:
                     self.stop_robot()
                     return True
 
+                # 현재 위치에서 목표점 방향
+                target_angle = math.atan2(dy, dx)
+
+                # 목표점에 등을 보도록 설정
+                desired_yaw = target_angle + math.pi
+
+                angle_error = desired_yaw - current_yaw
+
+                # -pi ~ pi 범위로 정규화
+                angle_error = math.atan2(
+                    math.sin(angle_error),
+                    math.cos(angle_error)
+                )
+
+                # 후진
                 msg.linear.x = -abs(speed)
-                msg.angular.z = 0.0
+
+                # 후진하면서 방향 보정
+                msg.angular.z = -1.0 * angle_error
+
+                # 회전 속도 제한
+                msg.angular.z = max(
+                    -0.5,
+                    min(0.5, msg.angular.z)
+                )
+
                 self.cmd_vel_pub.publish(msg)
+
                 await self._sleep(0.02)
 
         finally:
