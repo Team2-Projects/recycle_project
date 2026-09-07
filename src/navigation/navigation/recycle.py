@@ -420,15 +420,16 @@ class Recycle(Node):
         self.servo_future = self.servo_client.call_async(req)
 
     async def move_backward(
-    self,
-    goal_handle,
-    target_x: float,
-    target_y: float,
-    speed: float = 0.08
+        self,
+        goal_handle,
+        target_x: float,
+        target_y: float,
+        speed: float = 0.08
     ):
         msg = Twist()
 
         tolerance = 0.05
+        angle_tolerance = 0.1
 
         try:
             start_time = self.get_clock().now()
@@ -439,7 +440,7 @@ class Recycle(Node):
                     self.get_clock().now() - start_time
                 ).nanoseconds / 1e9
 
-                if elapsed > 5.0:
+                if elapsed > 10.0:
                     self.get_logger().error("❌ 후진 시간 초과")
                     self.stop_robot()
                     return False
@@ -462,36 +463,48 @@ class Recycle(Node):
 
                 distance = math.sqrt(dx * dx + dy * dy)
 
-                # 목표점 도착
+                # 목표 도착
                 if distance <= tolerance:
                     self.stop_robot()
                     return True
 
-                # 현재 위치에서 목표점 방향
+                # 목표 방향
                 target_angle = math.atan2(dy, dx)
 
-                # 목표점에 등을 보도록 설정
+                # 후진이므로 목표 반대 방향을 바라봄
                 desired_yaw = target_angle + math.pi
 
                 angle_error = desired_yaw - current_yaw
 
-                # -pi ~ pi 범위로 정규화
                 angle_error = math.atan2(
                     math.sin(angle_error),
                     math.cos(angle_error)
                 )
 
-                # 후진
-                msg.linear.x = -abs(speed)
+                # =========================
+                # 1단계: 방향 먼저 맞추기
+                # =========================
+                if abs(angle_error) > angle_tolerance:
 
-                # 후진하면서 방향 보정
-                msg.angular.z = -1.0 * angle_error
+                    msg.linear.x = 0.0
 
-                # 회전 속도 제한
-                msg.angular.z = max(
-                    -0.5,
-                    min(0.5, msg.angular.z)
-                )
+                    msg.angular.z = max(
+                        -0.5,
+                        min(0.5, angle_error)
+                    )
+
+                # =========================
+                # 2단계: 방향이 맞으면 후진
+                # =========================
+                else:
+
+                    msg.linear.x = -abs(speed)
+
+                    # 작은 방향 오차만 보정
+                    msg.angular.z = max(
+                        -0.2,
+                        min(0.2, -angle_error)
+                    )
 
                 self.cmd_vel_pub.publish(msg)
 
