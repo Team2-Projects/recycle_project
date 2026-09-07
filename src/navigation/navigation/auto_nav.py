@@ -416,6 +416,7 @@ class AutoNav(Node):
         if self.current_idx >= len(self.waypoints):
             if self.collected_count > 0:
                 self.publish_robot_task("OBJECT_PICKUP_START", "수거 시작", "", "Task")
+                self.object_found = True
                 self.launch_recycle_action()
                 return 
             

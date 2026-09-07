@@ -175,19 +175,19 @@ class Recycle(Node):
             recycle_points = [
                 [
                     (-0.3, -0.5),
-                    (-0.8, -0.5)
+                    (-0.9, -0.5)
                 ],
                 [
                     (-0.3, -1.2),
-                    (-0.8, -1.2)
+                    (-0.9, -1.2)
                 ],
                 [
                     (-0.3, -1.8),
-                    (-0.8, -1.8)
+                    (-0.9, -1.8)
                 ],
                 [
                     (-0.3, -2.5),
-                    (-0.8, -2.5)
+                    (-0.9, -2.5)
                 ]
             ]
 
@@ -509,7 +509,7 @@ class Recycle(Node):
                     self.get_clock().now() - start_time
                 ).nanoseconds / 1e9
 
-                if elapsed > 5.0:
+                if elapsed > 10.0:
                     self.get_logger().error("❌ 후진 시간 초과")
                     self.stop_robot()
                     return False
