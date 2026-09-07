@@ -428,19 +428,88 @@ class Recycle(Node):
     ):
         msg = Twist()
 
-        tolerance = 0.05
-        angle_tolerance = 0.1
+        distance_tolerance = 0.05
+        rotate_tolerance = 0.10
 
         try:
             start_time = self.get_clock().now()
 
+            # ---------------------------------
+            # 후진할 차체 방향을 처음에 한 번만 계산
+            # ---------------------------------
+            current_pose = self.get_current_pose()
+
+            if current_pose is None:
+                self.get_logger().error("❌ 후진 시작 위치 확인 실패")
+                return False
+
+            start_x, start_y, current_yaw = current_pose
+
+            dx = target_x - start_x
+            dy = target_y - start_y
+
+            target_angle = math.atan2(dy, dx)
+
+            # 목표점을 등지고 있어야 후진으로 목표점에 갈 수 있음
+            desired_yaw = target_angle + math.pi
+
+            desired_yaw = math.atan2(
+                math.sin(desired_yaw),
+                math.cos(desired_yaw)
+            )
+
+            # =================================
+            # 1단계: 후진 방향으로 먼저 회전
+            # =================================
+            while rclpy.ok():
+
+                if goal_handle.is_cancel_requested:
+                    self.stop_robot()
+                    return False
+
+                current_pose = self.get_current_pose()
+
+                if current_pose is None:
+                    self.stop_robot()
+                    await self._sleep(0.05)
+                    continue
+
+                _, _, current_yaw = current_pose
+
+                angle_error = desired_yaw - current_yaw
+
+                angle_error = math.atan2(
+                    math.sin(angle_error),
+                    math.cos(angle_error)
+                )
+
+                # 방향 맞음
+                if abs(angle_error) <= rotate_tolerance:
+                    self.stop_robot()
+                    break
+
+                # 제자리 회전만 수행
+                msg.linear.x = 0.0
+
+                msg.angular.z = max(
+                    -0.4,
+                    min(0.4, angle_error)
+                )
+
+                self.cmd_vel_pub.publish(msg)
+
+                await self._sleep(0.02)
+
+            # =================================
+            # 2단계: 방향 고정하고 직선 후진
+            # =================================
             while rclpy.ok():
 
                 elapsed = (
                     self.get_clock().now() - start_time
                 ).nanoseconds / 1e9
 
-                if elapsed > 10.0:
+                if elapsed > 5.0:
                     self.get_logger().error("❌ 후진 시간 초과")
                     self.stop_robot()
                     return False
@@ -458,22 +527,28 @@ class Recycle(Node):
 
                 current_x, current_y, current_yaw = current_pose
 
+                # 목표까지 실제 거리
                 dx = target_x - current_x
                 dy = target_y - current_y
 
-                distance = math.sqrt(dx * dx + dy * dy)
+                distance = math.sqrt(
+                    dx * dx + dy * dy
+                )
 
                 # 목표 도착
-                if distance <= tolerance:
+                if distance <= distance_tolerance:
                     self.stop_robot()
+
+                    self.get_logger().info(
+                        f"✅ 후진 완료: distance={distance:.3f}"
+                    )
+
                     return True
 
-                # 목표 방향
-                target_angle = math.atan2(dy, dx)
-
-                # 후진이므로 목표 반대 방향을 바라봄
-                desired_yaw = target_angle + math.pi
-
+                # ---------------------------------
+                # 처음 정한 방향만 유지
+                # 목표 방향을 다시 계산하지 않음
+                # ---------------------------------
                 angle_error = desired_yaw - current_yaw
 
                 angle_error = math.atan2(
@@ -481,30 +556,17 @@ class Recycle(Node):
                     math.cos(angle_error)
                 )
 
-                # =========================
-                # 1단계: 방향 먼저 맞추기
-                # =========================
-                if abs(angle_error) > angle_tolerance:
+                # 계속 후진
+                msg.linear.x = -abs(speed)
 
-                    msg.linear.x = 0.0
-
-                    msg.angular.z = max(
-                        -0.5,
-                        min(0.5, angle_error)
+                # 후진하면서 아주 작게 방향 보정
+                msg.angular.z = max(
+                    -0.10,
+                    min(
+                        0.10,
+                        -0.5 * angle_error
                     )
-
-                # =========================
-                # 2단계: 방향이 맞으면 후진
-                # =========================
-                else:
-
-                    msg.linear.x = -abs(speed)
-
-                    # 작은 방향 오차만 보정
-                    msg.angular.z = max(
-                        -0.2,
-                        min(0.2, -angle_error)
-                    )
+                )
 
                 self.cmd_vel_pub.publish(msg)
 
