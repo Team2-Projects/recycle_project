@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from ament_index_python.packages import get_package_share_directory
 import os
+import openvino as ov
 
 clf_idx = {
     'can': 0,
@@ -39,7 +40,7 @@ class YoloNode(Node):
         # # 3. 모델 로드
         # self.model = YOLO(model_path)
         self.model = YOLO(
-    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
+    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
     task='segment'
 )
         
@@ -49,7 +50,24 @@ class YoloNode(Node):
         # self.subscription = self.create_subscription(
         #     Image, '/image_raw', self.listener_callback, 10)
 
-  
+                # OpenVINO 분류 모델 로드
+        self.ov_core = ov.Core()
+
+        self.classify_model_ov = self.ov_core.read_model(
+            model_path
+        )
+
+        self.compiled_classify_model = (
+            self.ov_core.compile_model(
+                self.classify_model_ov,
+                'CPU'
+            )
+        )
+
+        # OpenVINO 입출력 키
+        self.input_key = self.compiled_classify_model.input(0)
+        self.output_key = self.compiled_classify_model.output(0)
+
 
     def listener_callback(self, msg):
 
