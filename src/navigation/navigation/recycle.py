@@ -527,24 +527,17 @@ class Recycle(Node):
 
                 current_x, current_y, current_yaw = current_pose
 
-                # 목표까지 실제 거리
-                dx = target_x - current_x
-                dy = target_y - current_y
+                # 목표 도착 - X 좌표만 확인
+                x_error = abs(target_x - current_x)
 
-                distance = math.sqrt(
-                    dx * dx + dy * dy
-                )
-
-                # 목표 도착
-                if distance <= distance_tolerance:
+                if x_error <= distance_tolerance:
                     self.stop_robot()
 
                     self.get_logger().info(
-                        f"✅ 후진 완료: distance={distance:.3f}"
+                        f"✅ 후진 완료: x_error={x_error:.3f}"
                     )
 
                     return True
-
                 # ---------------------------------
                 # 처음 정한 방향만 유지
                 # 목표 방향을 다시 계산하지 않음
