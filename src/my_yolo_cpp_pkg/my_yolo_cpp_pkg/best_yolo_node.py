@@ -14,10 +14,14 @@ clf_idx = {
     'paper': 1,
     'plastic': 2,
     'trash': 3,
-    'glass_bottle': 4,
-    'person': 5
+    'person': 4
 }
 
+# OpenVINO 분류 모델 경로
+model_path = (
+    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
+    '0907_classify_model_openvino/classify_model.xml'
+)
 
 class YoloNode(Node):
     def __init__(self):
@@ -48,29 +52,28 @@ class YoloNode(Node):
   
 
     def listener_callback(self, msg):
-        self.frame_count += 1
 
-        if self.frame_count % 1 != 0:
-            return
+        conf_threshold = self.get_parameter('conf').get_parameter_value().double_value
+        np_arr = np.frombuffer(msg.data, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
-        else:
-            conf_threshold = self.get_parameter('conf').get_parameter_value().double_value
-            #transformed by 8byte int 
-            np_arr = np.frombuffer(msg.data, np.uint8)
-            #reconstruction img
 
-            # 1. CvBridge를 사용하여 ROS 이미지를 OpenCV(BGR)로 변환
-            # frame_bgr = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        classify_result = self.compiled_classify_model(
+            {
+                self.input_key:
+                frame.reshape(1, 480, 640, 3)
+            }
+        )[self.output_key]
 
-            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            # frame_bgr = cv2.convertScaleAbs(frame_bgr, alpha=1.5, beta=30)
-            # frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-            # print(f"이미지 형태 (Shape): {frame_bgr.shape}")
-            # # 추론
-            results = self.model.predict(source=frame, imgsz=640, conf=conf_threshold, verbose=False)
-            
-            res = results[0]
+        self.pred_class = np.argmax(
+            classify_result [0]
+        )
+
         
+        
+        if self.pred_class == 1:
+            results = self.model.predict(source=frame, imgsz=640, conf=conf_threshold, verbose=False)
+            res = results[0]
             if len(res.boxes) > 0:
                   # 2. 모든 객체의 신뢰도(conf)를 가져와서 가장 높은 인덱스를 찾음
                   # res.boxes.conf는 텐서 형태이므로 리스트로 변환 후 사용

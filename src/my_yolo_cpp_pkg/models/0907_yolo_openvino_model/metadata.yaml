@@ -1,7 +1,7 @@
-description: Ultralytics YOLOv8-seg-custom model trained on /content/drive/MyDrive/final_project_dataset/final_dataset/data.yaml
+description: Ultralytics YOLOv8-seg-custom model trained on /content/drive/MyDrive/final_project_dataset/final_dataset0904(No-glass)/data.yaml
 author: Ultralytics
-date: '2026-08-27T06:15:52.688181+00:00'
-version: 8.4.130
+date: '2026-09-08T00:23:19.717989+00:00'
+version: 8.4.143
 license: AGPL-3.0 License (https://ultralytics.com/license)
 docs: https://docs.ultralytics.com
 stride: 32
@@ -16,14 +16,13 @@ names:
   1: paper
   2: plastic
   3: trash
-  4: glass_bottle
-  5: person
+  4: person
 args:
   data: null
   batch: 1
   fraction: 1.0
   quantize: null
+  nms: null
   dynamic: false
-  nms: false
 channels: 3
 end2end: false

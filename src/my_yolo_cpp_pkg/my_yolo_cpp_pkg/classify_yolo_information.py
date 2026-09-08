@@ -22,7 +22,7 @@ from rclpy.qos import (
 # OpenVINO 분류 모델 경로
 model_path = (
     '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
-    '0829classify_model_openvino/classify_model.xml'
+    '0907_classify_model_openvino/classify_model.xml'
 )
 
 
@@ -32,8 +32,7 @@ object_id = {
     'paper': 1,
     'plastic': 2,
     'trash': 3,
-    'glass_bottle': 4,
-    'person': 5
+    'person': 4
 }
 
 
@@ -50,7 +49,7 @@ class YoloNode(Node):
 
         # YOLO 모델 로드
         self.model = YOLO(
-            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/final_openvino_model',
+            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
             task='segment'
         )
 

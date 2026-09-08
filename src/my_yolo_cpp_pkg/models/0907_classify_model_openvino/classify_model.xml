@@ -1264,13 +1264,13 @@
 				</port>
 			</input>
 			<output>
-				<port id="1" precision="FP32" names="keras_tensor_57">
+				<port id="1" precision="FP32" names="keras_tensor_61">
 					<dim>-1</dim>
 					<dim>2</dim>
 				</port>
 			</output>
 		</layer>
-		<layer id="76" name="keras_tensor_57" type="Result" version="opset1" output_names="keras_tensor_57">
+		<layer id="76" name="keras_tensor_61" type="Result" version="opset1" output_names="keras_tensor_61">
 			<input>
 				<port id="0" precision="FP32">
 					<dim>-1</dim>
