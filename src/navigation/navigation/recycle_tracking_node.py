@@ -236,7 +236,7 @@ class RecycleTrackingNode(Node):
 
             # 1. 실시간으로 최신 데이터 가져오기 (매우 중요!)
             if self.latest_object.id == -1:
-                init_diff = 400 - target_x
+                init_diff = 350 - target_x
                 msg = Twist()
                 # 0.2 -> 0.05
 
@@ -265,7 +265,7 @@ class RecycleTrackingNode(Node):
 
                 target_x = self.latest_object.coord[0]
                 #target_x = current_x
-                diff = 400 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
+                diff = 350 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
 
 
                     # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
@@ -292,7 +292,7 @@ class RecycleTrackingNode(Node):
 
         target_x = self.latest_object.coord[0]
         #target_x = current_x
-        diff = 400 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
+        diff = 350 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
                 # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
 
         if abs(diff) >= 10:
