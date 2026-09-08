@@ -379,8 +379,12 @@ class YoloNode(Node):
                 coords = res.boxes.xywh.tolist()
                 y_list = []
 
-                for i in range(len(coords)):
-                  y_list.append(coords[i][1])
+                top_y_list = [
+                    coords[i][1] - coords[i][3] / 2
+                    for i in range(len(coords))
+                ]
+
+                min_y = min(top_y_list)
                 # -----------------------------
                 # 추적 모드
                 # -----------------------------
@@ -462,7 +466,7 @@ class YoloNode(Node):
                             for x in best_coord
                         ]
 
-                        msg_data.min_y = min(y_list)
+                        msg_data.min_y = min_y 
 
                     # -------------------------
                     # 아직 x프레임 미만
