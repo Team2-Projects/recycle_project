@@ -21,7 +21,7 @@ from rclpy.qos import (
 
 # OpenVINO 분류 모델 경로
 model_path = (
-    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
+    '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
     '0907_classify_model_openvino/classify_model.xml'
 )
 
@@ -49,7 +49,7 @@ class YoloNode(Node):
 
         # YOLO 모델 로드
         self.model = YOLO(
-            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
+            '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
             task='segment'
         )
 
@@ -289,11 +289,7 @@ class YoloNode(Node):
 
     def listener_callback(self, msg):
 
-        self.frame_count += 1
-
-        if self.frame_count % 1 != 0:
-            return
-
+  
         # YOLO confidence
         conf_val = (
             self.get_parameter('conf_threshold')
@@ -334,10 +330,10 @@ class YoloNode(Node):
         # Background
         # =====================================
 
-        if self.pred_class == 0:
+        if self.pred_class == 100:
 
-       
-            msg_data.id = -1.0
+            self.get_logger().info(f'물체를 발견하지 못했습니다. result[0]: {result[0]}')
+            msg_data.id = -1
             msg_data.confidence = 0.0
             msg_data.coord = [
                 0.0,
@@ -355,8 +351,9 @@ class YoloNode(Node):
         # Object 존재 → YOLO 실행
         # =====================================
 
-        elif self.pred_class == 1:
-
+        # elif self.pred_class == 1:
+        else:
+            self.get_logger().info(f'물체를 발견하였습니다. result[0]: {result[0]}')
             results = self.model.predict(
                 source=frame,
                 imgsz=640,

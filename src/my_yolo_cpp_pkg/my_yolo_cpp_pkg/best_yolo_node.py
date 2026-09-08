@@ -20,7 +20,7 @@ clf_idx = {
 
 # OpenVINO 분류 모델 경로
 model_path = (
-    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
+    '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
     '0907_classify_model_openvino/classify_model.xml'
 )
 
@@ -40,7 +40,7 @@ class YoloNode(Node):
         # # 3. 모델 로드
         # self.model = YOLO(model_path)
         self.model = YOLO(
-    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
+    '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
     task='segment'
 )
         
