@@ -131,7 +131,7 @@ class SpringBridge(Node):
         # voice
         self.subscription = self.create_subscription(
             String,
-            'speech_to_text',
+            'speech_pub',
             self.listener_callback,
             10
         )
@@ -158,7 +158,7 @@ class SpringBridge(Node):
 
     def send_ws(self, data):
         try:
-            self.ws.send(json.dumps(data))
+            self.ws.send(json.dumps(data, ensure_ascii=False))
 
         except Exception as e:
             self.get_logger().error(
@@ -386,6 +386,8 @@ class SpringBridge(Node):
 
     def listener_callback(self, msg):
         text = msg.data.strip()
+
+        self.get_logger().info(text)
 
         data = {
             "type": "voice_msg",

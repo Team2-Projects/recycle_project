@@ -82,6 +82,11 @@ class AutoNav(Node):
         self.max_abort_retry = 3
 
         self.stop_pending = False
+        self.target_x = None
+        self.target_y = None
+        self.target_h = None
+        self.center_x = None
+        self.center_y = None
 
         latched_qos = QoSProfile(
             depth=1,
@@ -229,21 +234,24 @@ class AutoNav(Node):
 
     def object_callback(self, msg):
         if msg.id == -1:
-
+            return
 
         self.target_x = float(msg.coord[0])
         self.target_y = float(msg.coord[1])
         self.target_h = float(msg.coord[3])
         self.object_id = msg.id
-
-        self.y_min = float(getattr(msg, 'min_y', 0))
-
-
-        if self.object_found:
-            return
-            
+        self.y_min = float(getattr(msg, 'min_y', 0)) 
         if self.collected_count > 0 and msg.id != self.previous_object_id:
             return 
+        
+        if self.object_found:
+            self.target_x = float(msg.coord[0])
+            self.target_y = float(msg.coord[1])
+            self.target_h = float(msg.coord[3])
+            self.object_id = msg.id
+            self.y_min = float(getattr(msg, 'min_y', 0)) 
+            return
+            
 
         obj_name = object_name.get(msg.id, '-')
         conf_val = f"{msg.confidence:.2f}" if hasattr(msg, 'confidence') else "1.00"
@@ -284,9 +292,9 @@ class AutoNav(Node):
         self.publish_robot_task("OBJECT_PICKUP_START", "수거 시작", "", "Task")
         
         goal_msg = RecycleActionMsg.Goal()
-        goal_msg.target_x = self.target_x
-        goal_msg.target_y = self.target_y
-        goal_msg.target_h = self.target_h
+        goal_msg.target_x = float(self.target_x)
+        goal_msg.target_y = float(self.target_y)
+        goal_msg.target_h = float(self.target_h)
         
         self.get_logger().info('🚀 recycle_tracking_action 호출 (회전 + 접근)')
         future = self._recycle_tracking_client.send_goal_async(goal_msg)
@@ -336,6 +344,12 @@ class AutoNav(Node):
         self.get_logger().info('⏳ 3초간 수거함 상태 확인 중...')
         self.check_timer = self.create_timer(3.0, self.check_recycle_condition_callback)
 
+    def _delayed_resume(self):
+        self.delay_timer.cancel()
+        self.destroy_timer(self.delay_timer)
+        self.object_found = False
+        self.send_goal(self.resume_x, self.resume_y)
+
     def check_recycle_condition_callback(self):
         self.check_timer.cancel()
         self.destroy_timer(self.check_timer)
@@ -349,8 +363,9 @@ class AutoNav(Node):
             self.trigger_pantilt_movement(151)
             self.get_logger().info('🔄 수거 완료. 순찰을 계속합니다.')
             if self.object_found:
-                self.object_found = False
-            self.send_goal(self.resume_x, self.resume_y)
+                self.delay_timer = self.create_timer(2.0, self._delayed_resume)
+            #     self.object_found = False
+            # self.send_goal(self.resume_x, self.resume_y)
 
     def launch_recycle_action(self):
         goal_msg = RecycleActionMsg.Goal()
@@ -389,11 +404,11 @@ class AutoNav(Node):
             self.return_home_by_stop()
             return
 
-        if not result.success:
-            self.get_logger().warn(f'Recycle 실패: {result.message}')
+        if result.type == "fail":
+            self.get_logger().warn(f'분리수거장 이동 실패: {result.message}')
             self.publish_robot_task('OBJECT_PICKUP_FAIL', '분리수거 실패', '', 'Error')
-            self.object_found = False
-            self.send_goal(self.resume_x, self.resume_y)
+            if rclpy.ok():
+                rclpy.shutdown()
             return
 
         self.collected_count = 0

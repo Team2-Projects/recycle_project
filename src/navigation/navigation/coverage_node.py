@@ -5,6 +5,7 @@ from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped
 from tf2_ros import Buffer, TransformListener, TransformException
 from scipy.ndimage import binary_dilation, label
+from std_msgs.msg import Int32MultiArray
 import numpy as np
 import time
 
@@ -24,12 +25,19 @@ class CoveragePlanner(Node):
         self.home = None
         self.patrol_points = None
 
-        self.voice_arr = []
+        self.voice_arr = None
+
+        self.subscription = self.create_subscription(
+            Int32MultiArray,
+            '/patrol_indexs',
+            self.voice_callback,
+            qos
+        )
 
         self.path_published = False  # 중복 발행 방지
 
     def voice_callback(self, msg):
-        voice_arr = msg
+        self.voice_arr = list(msg.data)
 
     # ── 경로 발행 ─────────────────────────────────────
     def publish_path(self):
@@ -46,15 +54,20 @@ class CoveragePlanner(Node):
             5: (0.9, -2.5)
         }
 
-        if len(voice_arr) > 0:
-            for zone_num in voice_arr:
+        selected_waypoints = []
+        labels = []
+
+        if self.voice_arr is not None and len(self.voice_arr) > 0:
+            for zone_num in self.voice_arr:
                 selected_waypoints.append(self.patrol_points[zone_num])
-            selected_waypoints.append(self.home)
+                labels.append(str(zone_num))
         else:
             selected_waypoints = list(self.patrol_points.values())
-            selected_waypoints.append(self.home)
+            labels = [str(i) for i in self.patrol_points.keys()]
 
-        labels = ['1', '2', '3', '4', '5', '6', 'HOME']
+        selected_waypoints.append(self.home)
+        labels.append('HOME')
+
         for lbl, (wx, wy) in zip(labels, selected_waypoints):
             self.get_logger().info(f'  [{lbl}] ({wx:.2f}, {wy:.2f})')
 
@@ -83,13 +96,35 @@ class CoveragePlanner(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = CoveragePlanner()
-    node.publish_path()
+
+    start_time = time.time()
 
     while rclpy.ok() and not node.path_published:
-        rclpy.spin_once(node, timeout_sec=0.1)
+        rclpy.spin_once(
+            node,
+            timeout_sec=0.05
+        )
+
+        if node.voice_arr is not None:
+            node.get_logger().info(
+                '✅ patrol_indexs 데이터 수신 → 선택 경로 생성'
+            )
+
+            node.publish_path()
+            break
+
+        if time.time() - start_time >= 0.5:
+            node.get_logger().info(
+                '⏱️ 0.5초 동안 patrol_indexs 없음 '
+                '→ 전체 경로 생성'
+            )
+
+            node.voice_arr = []
+            node.publish_path()
+            break
 
     node.get_logger().info('📡 경로 발행 완료!')
-    
+
     try:
         rclpy.spin(node) 
     except KeyboardInterrupt:

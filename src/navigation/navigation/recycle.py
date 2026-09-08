@@ -72,6 +72,8 @@ class Recycle(Node):
         self._tick_period = 0.02  # 50Hz
         self._tick_waiters = []
 
+        self.moveCount = 0
+
         self._tick_timer = self.create_timer(
             self._tick_period,
             self._on_tick,
@@ -204,19 +206,29 @@ class Recycle(Node):
                     f"🚗 Waypoint {i + 1} 이동: "
                     f"({target_x}, {target_y})"
                 )
-                success = await self.go_to_pose(goal_handle, target_x, target_y)
 
-                if goal_handle.is_cancel_requested:
-                    return self.cancel_result(goal_handle)
+                while self.moveCount <= 2:
+                    success = await self.go_to_pose(goal_handle, target_x, target_y)
+                    
+                    if goal_handle.is_cancel_requested:
+                        self.moveCount = 0
+                        return self.cancel_result(goal_handle)
+                    
+                    if success:
+                        self.moveCount = 0
+                        break
+                    self.moveCount += 1
 
                 if not success:
                     result.success = False
+                    self.moveCount = 0
+                    result.type = "fail"
                     result.message = (
                         f"Waypoint {i + 1} 이동 실패"
                     )
                     goal_handle.abort()
                     return result
-
+                
             self.trigger_servo_movement(-90, 90)
 
             if len(self.waypoints) < 2:
@@ -238,11 +250,6 @@ class Recycle(Node):
 
             if goal_handle.is_cancel_requested:
                 return self.cancel_result(goal_handle)
-            if not success:
-                result.success = False
-                result.message = "직전 좌표로 후진 실패"
-                goal_handle.abort()
-                return result
 
             self.get_logger().info(
                 f"🏠 HOME 이동: "

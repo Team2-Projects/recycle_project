@@ -1,4 +1,5 @@
 import os
+import subprocess
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -6,6 +7,13 @@ from gtts import gTTS
 import pygame
 from geometry_msgs.msg import Twist
 from .intent_parser import IntentParser
+
+from std_msgs.msg import Int32MultiArray
+from rclpy.qos import (
+    QoSProfile,
+    DurabilityPolicy,
+    ReliabilityPolicy
+)
 
 class TtsSubscriber(Node):
     def __init__(self):
@@ -26,6 +34,16 @@ class TtsSubscriber(Node):
             10
         )
 
+        qos = QoSProfile(
+            depth=1,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=ReliabilityPolicy.RELIABLE
+        )
+
+        self.path_pub = self.create_publisher(Int32MultiArray, '/patrol_indexs', qos)
+
+        self.speech_pub = self.create_publisher(String, '/speech_pub', 10)
+
         self.collected_count = 0
         self.parser = IntentParser()
         self.command_flag = 0
@@ -35,6 +53,14 @@ class TtsSubscriber(Node):
     def odom_callback(self, msg):
         # /odom에서 현재 선속도(linear.x)를 실시간으로 업데이트
         self.current_linear_x = msg.twist.twist.linear.x
+
+    def is_auto_nav_alive(self):
+        node_names = self.get_node_names()
+
+        return any(
+            name.strip('/') == 'auto_nav'
+            for name in node_names
+        )
 
     def listener_callback(self, msg):
         text = msg.data.strip()
@@ -51,24 +77,49 @@ class TtsSubscriber(Node):
             patrol_paths = self.parser.get_patrol_indexs(text)
             self.get_logger().info(f'🔊 Patrol_paths for flag_0 수신: "{patrol_paths}"')
 
+            speech_msg = String()
+            speech_msg.data = text
+            self.speech_pub.publish(speech_msg)
+
+            if self.is_auto_nav_alive():
+                self.get_logger().warn(
+                    "auto_nav already running"
+                )
+                return
+
+            path_msg = Int32MultiArray()
+            path_msg.data = patrol_paths
+            self.path_pub.publish(path_msg)
+
+            subprocess.Popen(
+                [
+                    "ros2",
+                    "launch",
+                    "navigation",
+                    "navigation.launch.py"
+                ],
+                start_new_session=True
+            )
+            self.get_logger().info(
+                "Launch started"
+            )
+
         elif self.command_flag == 1:
             start_time= self.parser.get_start_time(text)
             self.get_logger().info(f'🔊 start_time for flag_1 수신: "{start_time}"')
+
+            speech_msg = String()
+            speech_msg.data = text
+            self.speech_pub.publish(speech_msg)
 
         elif self.command_flag == 2:
             return_text = self.parser.parse()
             self.get_logger().info(f'🔊 return_text for flag_2 수신: "{return_text}"')
 
-
-       
-
-       
             file_path = os.path.join(self.save_dir, f'return_text.mp3')
             self.collected_count += 1
 
             try:
-
-
                 # 1. gTTS 변환 및 저장 (잘못된 logger 줄 삭제)
                 tts = gTTS(text=text, lang='ko')
                 tts.save(file_path)
