@@ -274,7 +274,7 @@ class YoloNode(Node):
         centers_x = boxes.xywh[:, 0].tolist()
 
         distances = [
-            abs(x - 400)
+            abs(x - 350)
             for x in centers_x
         ]
 
@@ -334,10 +334,10 @@ class YoloNode(Node):
         # Background
         # =====================================
 
-        if self.pred_class == 100:
+        if self.pred_class == 0:
 
        
-            msg_data.id = 1
+            msg_data.id = -1.0
             msg_data.confidence = 0.0
             msg_data.coord = [
                 0.0,
@@ -346,7 +346,7 @@ class YoloNode(Node):
                 0.0
             ]
 
-            msg_data.max_y_up = 0.0
+            msg_data.min_y = 0.0
 
             # 객체 안정성 정보 초기화
             self.reset_tracking()
@@ -355,7 +355,7 @@ class YoloNode(Node):
         # Object 존재 → YOLO 실행
         # =====================================
 
-        else:
+        elif self.pred_class == 1:
 
             results = self.model.predict(
                 source=frame,
@@ -366,7 +366,8 @@ class YoloNode(Node):
 
             res = results[0]
 
-            confidences = res.boxes.conf.tolist()
+
+
 
             # =================================
             # YOLO 객체 발견
@@ -374,6 +375,12 @@ class YoloNode(Node):
 
             if len(res.boxes) > 0:
 
+                confidences = res.boxes.conf.tolist()
+                coords = res.boxes.xywh.tolist()
+                y_list = []
+
+                for i in range(len(coords)):
+                  y_list.append(coords[i][1])
                 # -----------------------------
                 # 추적 모드
                 # -----------------------------
@@ -455,10 +462,7 @@ class YoloNode(Node):
                             for x in best_coord
                         ]
 
-                        msg_data.max_y_up = (
-                            best_coord[1]
-                            - 0.5 * best_coord[3]
-                        )
+                        msg_data.min_y = min(y_list)
 
                     # -------------------------
                     # 아직 x프레임 미만
@@ -476,7 +480,7 @@ class YoloNode(Node):
                             0.0
                         ]
 
-                        msg_data.max_y_up = 0.0
+                        msg_data.min_y = 0.0
 
                 # =================================
                 # object_id에 없는 클래스
@@ -494,7 +498,7 @@ class YoloNode(Node):
                         0.0
                     ]
 
-                    msg_data.max_y_up = 0.0
+                    msg_data.min_y = 0.0
 
                     self.reset_tracking()
 
@@ -514,7 +518,7 @@ class YoloNode(Node):
                     0.0
                 ]
 
-                msg_data.max_y_up = 0.0
+                msg_data.min_y = 0.0
 
                 # 객체가 끊겼으므로 초기화
                 self.reset_tracking()

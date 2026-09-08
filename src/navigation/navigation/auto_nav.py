@@ -76,7 +76,7 @@ class AutoNav(Node):
 
         self.collected_count = 0         
         self.previous_object_id = None   
-        self.nearest_target_y_up = None
+        self.y_min = None
 
         self.abort_retry_count = 0
         self.max_abort_retry = 3
@@ -229,15 +229,14 @@ class AutoNav(Node):
 
     def object_callback(self, msg):
         if msg.id == -1:
-            # if self.object_found:
-            #     self.object_found = False
-            #     self.trigger_servo_movement(0, 0)
 
-            # else:
-            #     return
-            return
 
-        self.nearest_target_y_up = float(getattr(msg, 'max_y_up', 0))
+        self.target_x = float(msg.coord[0])
+        self.target_y = float(msg.coord[1])
+        self.target_h = float(msg.coord[3])
+        self.object_id = msg.id
+
+        self.y_min = float(getattr(msg, 'min_y', 0))
 
 
         if self.object_found:
@@ -270,10 +269,6 @@ class AutoNav(Node):
             "Detect"
         )
 
-        self.target_x = float(msg.coord[0])
-        self.target_y = float(msg.coord[1])
-        self.target_h = float(msg.coord[3])
-        self.object_id = msg.id
 
         if self.current_idx < len(self.waypoints):
             self.resume_x, self.resume_y = self.waypoints[self.current_idx]
@@ -337,7 +332,7 @@ class AutoNav(Node):
         self.collected_count += 1
         self.get_logger().info(f'📦 물품 수거 성공! (현재 수거량: {self.collected_count})')
         
-        self.nearest_target_y_up = None
+        self.y_min = None
         self.get_logger().info('⏳ 3초간 수거함 상태 확인 중...')
         self.check_timer = self.create_timer(3.0, self.check_recycle_condition_callback)
 
@@ -345,9 +340,9 @@ class AutoNav(Node):
         self.check_timer.cancel()
         self.destroy_timer(self.check_timer)
 
-        if self.nearest_target_y_up is not None and 0 <= self.nearest_target_y_up <= 180:
+        if self.y_min is not None and 0 <= self.y_min <= 180:
             self.object_found = True  
-            self.get_logger().info(f'🗑️ 수거함 포화 감지 (y_up: {self.nearest_target_y_up:.1f})! HOME으로 이동합니다.')
+            self.get_logger().info(f'🗑️ 수거함 포화 감지 (y_min: {self.y_min:.1f})! HOME으로 이동합니다.')
             self.trigger_pantilt_movement(151)
             self.launch_recycle_action()
         else:
