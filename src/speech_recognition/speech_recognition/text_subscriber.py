@@ -71,8 +71,14 @@ class TtsSubscriber(Node):
         if not text:
             return
 
+        if len(text) > 35:
+            self.get_logger().warn(
+                f'노이즈 후보 무시: "{text}" ({len(text)}자)'
+            )
+            return
 
-        self.command_flag = self.parser.return_flag(text)
+        elif 0 < len(text) <= 35:
+            self.command_flag = self.parser.return_flag(text)
 
         if self.command_flag == 0:
             patrol_paths = self.parser.get_patrol_indexs(text)
