@@ -83,7 +83,7 @@ class AutoNav(Node):
         #     self.get_logger().info('Waiting for pantilt service on Raspberry Pi...')
 
         self.trigger_pantilt_movement(151)
-        self.trigger_servo_movement(0, 0)
+        self.trigger_servo_movement(0, 0, purpose='닫기/시작')
 
         self.waypoints = []
         self.current_idx = 0
@@ -114,6 +114,8 @@ class AutoNav(Node):
         self.max_abort_retry = 3
 
         self.stop_pending = False
+        # 집게가 열린 상태인지 추적한다. 실패 경로에서 반드시 닫기 위함.
+        self._servo_open = False
         self.target_x = None
         self.target_y = None
         self.target_h = None
@@ -150,11 +152,65 @@ class AutoNav(Node):
         )
         self.get_logger().info('AutoNav Ready with Multi-collection, Motor, and Web UI integration.')
 
-    def trigger_servo_movement(self, angle1, angle2):
+    def trigger_servo_movement(self, angle1, angle2, purpose='', verify=False, retries=1):
+        """서보 각도 요청. verify=True 면 ControlServo 응답까지 확인한다.
+
+        기존 코드는 call_async 결과를 보지 않아 서보가 실제로 움직였는지 알 수
+        없었다. 집게가 열린 채로 순찰을 계속하면 다음 대상 접근이나 주행에
+        지장이 있으므로, 열기/닫기는 응답을 확인하고 실패 시 1회 재시도한다.
+        """
+        label = purpose or f'angle=({angle1}, {angle2})'
         req = ControlServo.Request()
         req.angle1 = float(angle1)
         req.angle2 = float(angle2)
+        if not self.servo_client.service_is_ready():
+            self.get_logger().warn(f'서보 서비스 미준비 상태에서 요청 ({label})')
         self.servo_future = self.servo_client.call_async(req)
+        if verify:
+            self.servo_future.add_done_callback(
+                lambda fut: self._servo_result_callback(fut, angle1, angle2, label, retries)
+            )
+        else:
+            # 확인하지 않는 호출도 목표 상태는 기록해 둔다.
+            self._servo_open = (float(angle1), float(angle2)) != (0.0, 0.0)
+        return self.servo_future
+
+    def _servo_result_callback(self, future, angle1, angle2, label, retries):
+        """ControlServo 응답 확인. 실패하면 재시도하고, 그래도 실패하면 알린다."""
+        detail = ''
+        try:
+            response = future.result()
+        except Exception as exc:
+            response = None
+            detail = f'응답 수신 오류: {exc}'
+        if response is not None:
+            if getattr(response, 'success', False):
+                self._servo_open = (float(angle1), float(angle2)) != (0.0, 0.0)
+                state = '열림' if self._servo_open else '닫힘'
+                self.get_logger().info(f'서보 {state} 확인 ({label})')
+                return
+            detail = getattr(response, 'message', '') or '서비스가 success=False 반환'
+
+        if retries > 0:
+            self.get_logger().warn(f'서보 동작 실패 ({label}): {detail} → 재시도')
+            self.trigger_servo_movement(
+                angle1, angle2, purpose=label, verify=True, retries=retries - 1
+            )
+            return
+
+        # 실제 상태를 알 수 없으므로 열린 것으로 간주해 이후 닫기 시도를 허용한다.
+        self._servo_open = True
+        self.get_logger().error(f'서보 동작 확인 실패 ({label}): {detail}')
+        self.publish_robot_task(
+            'SERVO_FAIL', '서보 동작 확인 실패', f'{label}: {detail}', 'Error'
+        )
+
+    def close_servo_if_open(self, reason):
+        """열린 집게를 중립(0, 0)으로 되돌린다. 이미 닫혀 있으면 아무것도 하지 않는다."""
+        if not self._servo_open:
+            return
+        self.get_logger().info(f'집게 닫기 요청 ({reason})')
+        self.trigger_servo_movement(0, 0, purpose=f'닫기/{reason}', verify=True)
 
     def trigger_pantilt_movement(self, angle):
         req = ControlPantilt.Request()
@@ -246,6 +302,8 @@ class AutoNav(Node):
         self.object_found = True
         self.is_returning_home = True
 
+        self.close_servo_if_open('STOP/배터리 복귀')
+
         self.get_logger().info('사용자 STOP 또는 배터리 부족 → HOME 복귀')
         self.send_goal(self.home_x, self.home_y)
 
@@ -322,6 +380,8 @@ class AutoNav(Node):
             response.message = '추적 Action 서버가 준비되지 않음'
             return response
         self.cmd_vel_pub.publish(Twist())
+        # 실패 시 닫았으므로 재시도 전에 다시 연다.
+        self.trigger_servo_movement(-90, 90, purpose='열기/추적재시도', verify=True)
         self.target_x, self.target_y, self.target_h = obs.x, obs.y, obs.height
         self.cancel_reason = 'OBJECT'
         self._tracking_safety_hold = False
@@ -351,6 +411,7 @@ class AutoNav(Node):
 
         previous_reason = self._tracking_hold_reason or 'UNKNOWN'
         self.cmd_vel_pub.publish(Twist())
+        self.close_servo_if_open('hold 수동 해제')
         self._tracking_safety_hold = False
         self._tracking_hold_reason = ''
         self._sensor_recovery.reset()
@@ -383,6 +444,9 @@ class AutoNav(Node):
         """Resume simple visual failures; safety holds require explicit operator action."""
         self.cmd_vel_pub.publish(Twist())
         self.get_logger().warn(f'Tracking 종료: {message}')
+        # 객체 감지 시 열어둔 집게를 반드시 중립으로 되돌린다. 열린 채로 두면
+        # 다음 대상 접근과 주행에 지장이 있다.
+        self.close_servo_if_open('추적 실패')
         if self.cancel_reason in ('STOP', 'BATTERY_LOW'):
             self.return_home_by_stop()
             return
@@ -456,7 +520,7 @@ class AutoNav(Node):
         self.object_found = True
 
         self.get_logger().info("Object detected! Triggering servo...")
-        self.trigger_servo_movement(-90, 90)
+        self.trigger_servo_movement(-90, 90, purpose='열기/객체감지', verify=True)
 
         obj_str = object_name.get(msg.id, '-')
         conf_val = f"{msg.confidence:.2f}" if hasattr(msg, 'confidence') else "1.00"
@@ -536,7 +600,7 @@ class AutoNav(Node):
             return
 
         self.get_logger().info("Successed tracking! Triggering servo & pantilt...")
-        self.trigger_servo_movement(0, 0)
+        self.trigger_servo_movement(0, 0, purpose='닫기/수거성공', verify=True)
         self.trigger_pantilt_movement(90)
 
         self.collected_count += 1
