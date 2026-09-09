@@ -404,8 +404,8 @@ class AutoNav(Node):
             self.return_home_by_stop()
             return
 
-        if result.type == "fail":
-            self.get_logger().warn(f'분리수거장 이동 실패: {result.message}')
+        if result.message == "fail":
+            self.get_logger().warn(f'분리수거장 이동 실패')
             self.publish_robot_task('OBJECT_PICKUP_FAIL', '분리수거 실패', '', 'Error')
             if rclpy.ok():
                 rclpy.shutdown()

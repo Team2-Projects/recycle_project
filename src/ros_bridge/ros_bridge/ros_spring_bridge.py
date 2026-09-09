@@ -385,14 +385,9 @@ class SpringBridge(Node):
             )
 
     def listener_callback(self, msg):
-        text = msg.data.strip()
-
-        self.get_logger().info(text)
-
-        data = {
-            "type": "voice_msg",
-            "msg": text
-        }
+        data = json.loads(msg.data)
+        data["type"] = "voice_msg"
+        
         self.send_ws(data)
 
     def send_system_usage(self):

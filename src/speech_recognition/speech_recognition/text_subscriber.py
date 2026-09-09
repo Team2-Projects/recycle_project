@@ -7,6 +7,7 @@ from gtts import gTTS
 import pygame
 from geometry_msgs.msg import Twist
 from .intent_parser import IntentParser
+import json
 
 from std_msgs.msg import Int32MultiArray
 from rclpy.qos import (
@@ -78,7 +79,11 @@ class TtsSubscriber(Node):
             self.get_logger().info(f'🔊 Patrol_paths for flag_0 수신: "{patrol_paths}"')
 
             speech_msg = String()
-            speech_msg.data = text
+            speech_msg.data = json.dumps({
+                "command": text,
+                "commandIdx": int(self.command_flag),
+                "patrolPaths": patrol_paths
+            })
             self.speech_pub.publish(speech_msg)
 
             if self.is_auto_nav_alive():
@@ -109,7 +114,11 @@ class TtsSubscriber(Node):
             self.get_logger().info(f'🔊 start_time for flag_1 수신: "{start_time}"')
 
             speech_msg = String()
-            speech_msg.data = text
+            speech_msg.data = json.dumps({
+                "command": text,
+                "commandIdx": int(self.command_flag),
+                "startTime": f"{int(start_time):02d}:00"
+            })
             self.speech_pub.publish(speech_msg)
 
         elif self.command_flag == 2:

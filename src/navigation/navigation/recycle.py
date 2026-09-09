@@ -222,10 +222,7 @@ class Recycle(Node):
                 if not success:
                     result.success = False
                     self.moveCount = 0
-                    result.type = "fail"
-                    result.message = (
-                        f"Waypoint {i + 1} 이동 실패"
-                    )
+                    result.message = "fail"
                     goal_handle.abort()
                     return result
                 
