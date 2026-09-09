@@ -1,3 +1,11 @@
+# Enable/disable tracking mode.
+# target_class_id is used only when enable=true.
+# Project IDs: 0=can, 1=paper, 2=plastic, 3=trash, 4=person.
+# Use -1 when disabling or returning to general mode.
 bool enable
+int32 target_class_id
 ---
 bool success
+# Machine-readable result used by the tracking adapter.
+# OK, VISION_NOT_READY, INVALID_TARGET_CLASS, INTERNAL_ERROR
+string reason

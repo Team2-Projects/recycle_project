@@ -1,0 +1,73 @@
+# Integrated defaults: lost_abort_frames=12, approach_far_speed=0.08 (user settings).
+# Robot-verified base behavior is preserved; the vision-health degradation/recovery
+# thresholds below are newly added and still need one real-robot timing check.
+# Default = visual-stop test. Final open-loop motion is doubly gated OFF.
+# Same calibration: 640x480 image, fixed pan/tilt capture pose, x=350, bottom=430.
+recycle_tracking_node:
+  ros__parameters:
+    control_period_sec: 0.10
+    # Vision receipt health: slow stream -> DEGRADED, no result -> WAIT, long outage -> STALE.
+    # 0.6 s/result is allowed to keep working in DEGRADED mode instead of failing.
+    degraded_detection_age_sec: 0.50
+    # Hard motion stop threshold. This is intentionally wider than DEGRADED.
+    max_detection_age_sec: 1.00
+    # Return NORMAL only after this many new results arrive at <= degraded threshold.
+    degraded_clear_frames: 3
+    # In DEGRADED mode, approach speed is halved. Alignment keeps its proven
+    # minimum angular speed while larger rotation/steering commands are reduced.
+    degraded_speed_scale: 0.50
+    # WAIT is not terminal. Recovery has its own wider interval acceptance.
+    sensor_recovery_timeout_sec: 4.0
+    sensor_recovery_frames: 3
+    sensor_recovery_min_interval_sec: 0.05
+    sensor_recovery_max_interval_sec: 1.20
+    reacquire_start_frames: 3
+    lost_abort_frames: 12
+    lock_target_class: true
+
+    # 852f86b "align 350" 반영. 팬틸트 재설치 후 캘리브레이션 값.
+    align_reference_x: 350.0
+    align_tolerance_px: 15.0
+    align_stable_frames: 3
+    # Deadband + min/max-clamped P. Fixed minimum at 15..50 px; NOT pure P.
+    align_kp: 0.0010
+    align_min_angular_speed: 0.05
+    align_max_angular_speed: 0.12
+    align_timeout_sec: 15.0
+
+    # Progress watchdog + absolute safety cap. A slow DEGRADED stream may
+    # continue while geometry is still improving; mere message heartbeats do not
+    # reset progress. SENSOR_WAIT and LOST_TARGET have their own bounded policies.
+    approach_progress_timeout_sec: 12.0
+    approach_progress_lower_y_delta_px: 5.0
+    approach_progress_align_error_delta_px: 8.0
+    # Hard cap across REALIGN/SENSOR_WAIT/final motion; never reset by recovery.
+    approach_timeout_sec: 60.0
+    approach_stop_lower_y: 430.0
+    approach_stop_stable_frames: 2
+    approach_realign_threshold_px: 40.0
+    approach_steer_kp: 0.0004
+    approach_max_angular_speed: 0.06
+    approach_mid_lower_y: 330.0
+    approach_near_lower_y: 390.0
+    approach_far_speed: 0.08
+    approach_mid_speed: 0.04
+    approach_near_speed: 0.02
+
+    stop_only_test_mode: true
+    # Only set true after measuring actual remaining distance on the robot.
+    final_approach_calibrated: false
+    final_approach_speed: 0.03
+    # NOMINAL 30 cm / 0.03 m/s. Disabled by default. Not 30 cm measured by odometry.
+    final_approach_duration_sec: 10.0
+    tracking_service_timeout_sec: 3.0
+
+auto_nav:
+  ros__parameters:
+    tracking_failure_cooldown_sec: 2.0
+    # SENSOR_STALE / VISION_NOT_READY can retry the same target with
+    # /auto_nav/resume_sensor_hold after three healthy results. Any safety hold
+    # can instead be explicitly abandoned with /auto_nav/reset_tracking_hold.
+    sensor_recovery_frames: 3
+    sensor_recovery_min_interval_sec: 0.05
+    sensor_recovery_max_interval_sec: 1.20
