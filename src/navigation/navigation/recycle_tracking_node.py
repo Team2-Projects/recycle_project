@@ -1,559 +1,312 @@
+"""ROS 2 action adapter for the bounded alignment/approach controller."""
+
+from dataclasses import fields
+from threading import Event, Lock, RLock
 import time
-from threading import Event
 
 import rclpy
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.action import ActionServer, CancelResponse
-
+from rcl_interfaces.msg import ParameterDescriptor
 from geometry_msgs.msg import Twist
-
 from my_yolo_msgs.msg import DetectedObject
 from my_yolo_msgs.srv import SetTracking
 from navigation_interface.action import RecycleActionMsg
-from std_msgs.msg import String
-import math
+
+from navigation.tracking_control import (
+    Command, Observation, Phase, TrackingConfig, TrackingController,
+)
+
 
 class RecycleTrackingNode(Node):
-
     def __init__(self):
         super().__init__('recycle_tracking_node')
+        defaults = TrackingConfig()
+        values = {}
+        for field in fields(defaults):
+            self.declare_parameter(
+                field.name, getattr(defaults, field.name),
+                ParameterDescriptor(read_only=True, description='Edit YAML and restart this node'),
+            )
+            values[field.name] = self.get_parameter(field.name).value
+        self.config = TrackingConfig(**values)
 
         self.cancel_event = Event()
-        
-        self.cb_group = ReentrantCallbackGroup()
-
-        self.latest_object = None
-      
-
+        self.shutdown_event = Event()
+        self._state_lock = RLock()
+        self._goal_lock = Lock()
+        self._goal_busy = False
+        self._controller = None
+        self._object_msg_seq = 0
+        # Serialized object callbacks preserve callback-order frame counting.
+        # Service responses/cancel requests can execute while the action waits.
+        self._object_group = MutuallyExclusiveCallbackGroup()
+        self._action_group = ReentrantCallbackGroup()
+        self._service_group = ReentrantCallbackGroup()
         self.sub = self.create_subscription(
-            DetectedObject,
-            '/classified_detected_object_info',
-            # 'detected_object_info',
-            self.obj_callback,
-            10,
-            callback_group=self.cb_group)
-
-        self.cmd_vel_pub = self.create_publisher(
-            Twist,
-            '/cmd_vel',
-            10)
-
+            DetectedObject, '/classified_detected_object_info', self.obj_callback,
+            1, callback_group=self._object_group,
+        )
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.tracking_cli = self.create_client(
-            SetTracking,
-            'set_tracking_mode',
-            callback_group=self.cb_group)
-
+            SetTracking, 'set_tracking_mode', callback_group=self._service_group,
+        )
         self._action_server = ActionServer(
-            self,
-            RecycleActionMsg,
-            "recycle_tracking_action",
+            self, RecycleActionMsg, 'recycle_tracking_action',
             execute_callback=self.execute_callback,
+            goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback,
-            callback_group=self.cb_group
+            callback_group=self._action_group,
+        )
+        self.get_logger().info(
+            f'Recycle tracking: x={self.config.align_reference_x:.0f}, '
+            f'period={self.config.control_period_sec:.2f}s, '
+            f'stop_only_test_mode={self.config.stop_only_test_mode}'
         )
 
+    def _publish_command(self, command=Command()):
+        """Caller owns _state_lock when motion is active."""
+        msg = Twist()
+        if not self.cancel_event.is_set() and not self.shutdown_event.is_set():
+            msg.linear.x = float(command.linear_x)
+            msg.angular.z = float(command.angular_z)
+        self.cmd_vel_pub.publish(msg)
+
+    def goal_callback(self, request):
+        with self._goal_lock:
+            if self._goal_busy or self.shutdown_event.is_set() or request.index < 0:
+                return GoalResponse.REJECT
+            self._goal_busy = True
+            # Clear here, not in execute_callback: an early cancel must survive.
+            self.cancel_event.clear()
+        return GoalResponse.ACCEPT
+
     def obj_callback(self, msg):
-        self.latest_object = msg
-
-
-    def call_tracking_srv(self, enable):
-        req = SetTracking.Request()
-        req.enable = enable
-
-        # self.get_logger().info(f"YOLO 추적 모드 변경 요청 보냄: {enable}")
-        future = self.tracking_cli.call_async(req)
-
-        event = Event()
-
-        def done_callback(fut):
-            event.set()
-
-        future.add_done_callback(done_callback)
-
-        while rclpy.ok():
-            if event.wait(timeout=0.05):
-                break
-
-        if future.result() is None:
-            self.get_logger().error("Tracking Service 호출 실패")
-            return False
-
-        # self.get_logger().info(f"YOLO 추적 모드 변경 완료 응답 수신: {future.result().success}")
-        return True
-
-    def execute_callback(self, goal_handle):
-
-        self.get_logger().info("Recycle Tracking 시작")
-
-        self.cancel_event.clear()
-
-        if not self.call_tracking_srv(True):
-            goal_handle.abort()
-            result = RecycleActionMsg.Result()
-            result.success = False
-            result.message = 'YOLO 추적 서비스 호출 실패'
-            return result
-
-        self.get_logger().info("정렬(Align) 단계 진입")
-        if not self.align_robot(goal_handle, goal_handle.request.target_x):
-            self.cmd_vel_pub.publish(Twist())
-
-            # 사용자 STOP으로 취소된 경우
-            if goal_handle.is_cancel_requested:
-                self.get_logger().warn("Tracking Action canceled")
-                goal_handle.canceled()
-                result = RecycleActionMsg.Result()
-                result.success = False
-                result.message = "STOP"
-
-                return result
-
-            self.call_tracking_srv(False)
-
-            goal_handle.abort()
-            result = RecycleActionMsg.Result()
-            result.success = False
-            result.message = '정렬 실패'
-            return result
-
-        self.get_logger().info("접근(Approach) 단계 진입")
-        if not self.approach_robot(goal_handle):
-            self.call_tracking_srv(False)
-            self.cmd_vel_pub.publish(Twist())
-            if goal_handle.is_cancel_requested:
-                self.get_logger().warn("Tracking Action canceled")
-                goal_handle.canceled()
-                result = RecycleActionMsg.Result()
-                result.success = False
-                result.message = "STOP"
-                return result
-
-            goal_handle.abort()
-            result = RecycleActionMsg.Result()
-            result.success = False
-            result.message = '접근 실패 (거리 변화 감지 안됨)'
-            return result
-
-        self.call_tracking_srv(False)
-
-        if goal_handle.is_cancel_requested:
-            self.get_logger().warn("🛑 Tracking 완료 직전 취소")
-
-            goal_handle.canceled()
-
-            result = RecycleActionMsg.Result()
-            result.success = False
-            result.message = "STOP"
-            return result
-
-        goal_handle.succeed()
-
-        self.get_logger().info("Recycle Tracking 완료")
-
-        result = RecycleActionMsg.Result()
-        result.success = True
-        result.message = '정렬 및 접근 완료'
-        return result
+        with self._state_lock:
+            self._object_msg_seq += 1
+            controller = self._controller
+            if controller is None or controller.done:
+                return
+            now = time.monotonic()
+            try:
+                x, y, width, height = (float(value) for value in msg.coord)
+                obs = Observation(
+                    self._object_msg_seq, now, int(msg.id), float(msg.confidence),
+                    x, y, width, height,
+                )
+            except (TypeError, ValueError, AttributeError, OverflowError):
+                obs = Observation(self._object_msg_seq, now, -1, 0.0, 0.0, 0.0, 0.0, 0.0)
+            previous_phase = controller.phase
+            controller.observe(obs)
+            command = controller.step(now)
+            # Brake on invalid/near-threshold results without waiting for the
+            # next control tick. Never publish a nonzero velocity from here.
+            entering_realign = (previous_phase == Phase.APPROACH
+                                and controller.phase == Phase.REALIGN)
+            if command == Command() or entering_realign:
+                self._publish_command()
 
     def cancel_callback(self, goal_handle):
-        self.get_logger().warn("🛑 Tracking cancel 요청 수신")
-        self.cancel_event.set()
-        self.cmd_vel_pub.publish(Twist())
+        with self._state_lock:
+            self.cancel_event.set()
+            if self._controller is not None:
+                self._controller.cancel()
+            self._publish_command()
+        self.get_logger().warn('Tracking cancel 요청: 정지 명령 발행')
         return CancelResponse.ACCEPT
 
-    def move_forward_with_cancel(self, goal_handle, duration, speed):
-        start = time.time()
+    def _running(self):
+        return rclpy.ok() and not self.shutdown_event.is_set()
 
-        while time.time() - start < duration:
-
-            if self.cancel_event.is_set() or goal_handle.is_cancel_requested:
-                self.get_logger().warn("🛑 MOVE 강제 종료")
-                self.cmd_vel_pub.publish(Twist())
-                return False
-                
-            if goal_handle.is_cancel_requested:
-                self.cmd_vel_pub.publish(Twist())
-                return False
-
-            msg = Twist()
-            msg.linear.x = speed
-            self.cmd_vel_pub.publish(msg)
-
-            time.sleep(0.05)
-
-        self.cmd_vel_pub.publish(Twist())
-
-        return True
-
-
-    # # def align_robot(self, target_x):
-    # def align_robot(self, target_x):
-    #     # self.get_logger().info("물체 정렬 루프 시작...")
-        
-    #     # self.get_logger().info(f"target_x: {target_x:.2f}")
-    #     diff = 320 - target_x
-    #     diff_angle = abs(diff/10.3)
-
-    #     while rclpy.ok():
-    #         # self.get_logger().info(f"diff: {diff:.2f}")
-    #         # self.get_logger().info(f"diff_angle: {diff_angle:.2f}")
-    #         if abs(diff_angle) < 0.3:
-    #             self.get_logger().info(f"정렬 성공! 오차 angle: {diff_angle:.2f}")
-    #             break
-
-    #         msg = Twist()
-    #         msg.angular.z = (1 if diff > 0 else -1) * 0.02
-            
-    #         self.cmd_vel_pub.publish(msg)
-
-
-    #         time.sleep(0.2)
-            
-    #         diff_angle -= abs(msg.angular.z * 0.2) * (180.0 / math.pi)
-    #     self.cmd_vel_pub.publish(Twist())
-
-    #     return True
-
-    #     실시간 데이터를 사용하므로 conf를 0.2-3정도의 낮은 값으로 맞추세요.
-    def align_robot(self, goal_handle, target_x): # target_w는 초기값일 뿐, 루프에선 쓰지 마세요
-        self.get_logger().info("물체 정렬 루프 시작...")
-        
-        self.get_logger().info(f"target_x: {target_x:.2f}")
-        while rclpy.ok():
-
-            if self.cancel_event.is_set() or goal_handle.is_cancel_requested:
-                self.get_logger().warn("🛑 ALIGN 강제 종료")
-                self.cmd_vel_pub.publish(Twist())
-                return False
-
-            if goal_handle.is_cancel_requested:
-                self.get_logger().warn("🛑 정렬 중 Tracking 취소")
-
-                self.cmd_vel_pub.publish(Twist())
-                return False
-
-            # 1. 실시간으로 최신 데이터 가져오기 (매우 중요!)
-            if self.latest_object.id == -1:
-                init_diff = 350 - target_x
-                msg = Twist()
-                # 0.2 -> 0.05
-
-                msg.angular.z = (1 if init_diff > 0 else -1) * 0.05
-
-                self.cmd_vel_pub.publish(msg)
-                    
-                time.sleep(0.05)
-                
-                if abs(init_diff) < 10:
-                    self.get_logger().info(f"정렬 성공! 오차 픽셀: {init_diff:.2f}")
+    def call_tracking_srv(self, enable, target_class_id=-1, honor_cancel=True):
+        """Return (success, reason) with bounded discovery/response waiting."""
+        deadline = time.monotonic() + self.config.tracking_service_timeout_sec
+        future = None
+        try:
+            while self._running():
+                if honor_cancel and self.cancel_event.is_set():
+                    return False, 'CANCELED'
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.get_logger().error(f'SetTracking({enable}): 서비스 준비 시간 초과')
+                    return False, 'SERVICE_TIMEOUT'
+                if self.tracking_cli.wait_for_service(timeout_sec=min(0.05, remaining)):
                     break
-                # self.cmd_vel_pub.publish(Twist())
-                # time.sleep(0.05)
-                # msg = Twist()
-                # msg.angular.z = 0.00
-                # msg.linear.x = 0.02
-                # self.cmd_vel_pub.publish(msg)
-                # time.sleep(0.05)
-                # self.cmd_vel_pub.publish(Twist())
-                # time.sleep(0.05)
-                continue
-            
             else:
-                # 1. 실시간 중심점 계산
+                return False, 'SHUTDOWN'
+            request = SetTracking.Request()
+            request.enable = bool(enable)
+            request.target_class_id = int(target_class_id if enable else -1)
+            future = self.tracking_cli.call_async(request)
+            ready = Event()
+            future.add_done_callback(lambda _: ready.set())
+            while self._running():
+                if honor_cancel and self.cancel_event.is_set():
+                    return False, 'CANCELED'
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.get_logger().error(f'SetTracking({enable}): 응답 시간 초과')
+                    return False, 'SERVICE_TIMEOUT'
+                if ready.wait(timeout=min(0.05, remaining)):
+                    response = future.result()
+                    if response is None:
+                        self.get_logger().error(f'SetTracking({enable}): 빈 응답')
+                        return False, 'SERVICE_ERROR'
+                    reason = str(getattr(response, 'reason', '') or '').strip() or (
+                        'OK' if response.success else 'SERVICE_ERROR'
+                    )
+                    if not response.success:
+                        self.get_logger().error(f'SetTracking({enable}): 실패 응답 ({reason})')
+                        return False, reason
+                    return True, reason
+            return False, 'SHUTDOWN'
+        except Exception as exc:
+            self.get_logger().error(f'SetTracking({enable}) 예외: {exc}')
+            return False, 'SERVICE_ERROR'
+        finally:
+            if future is not None and not future.done():
+                # Cancels only the local future; server-side work is not revoked.
+                future.cancel()
 
-                target_x = self.latest_object.coord[0]
-                #target_x = current_x
-                diff = 350 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
+    def _run_control(self, goal_handle):
+        with self._state_lock:
+            # Discard the goal's old x/y and all pre-service detections.
+            self._controller = TrackingController(
+                self.config, int(goal_handle.request.index), time.monotonic(),
+            )
+        last_status = None
+        next_tick = time.monotonic()
+        while self._running():
+            with self._state_lock:
+                controller = self._controller
+                if self.cancel_event.is_set() or goal_handle.is_cancel_requested:
+                    controller.cancel()
+                command = controller.step(time.monotonic())
+                self._publish_command(command)
+                status = controller.status
+                done = controller.done
+                success = controller.phase == Phase.SUCCEEDED
+                reason = controller.reason
+            if status != last_status:
+                self.get_logger().info(f'Tracking: {status}')
+                # RecycleActionMsg.Feedback 에 status 필드가 없는 버전과도
+                # 호환되게 한다. 없으면 로그만 남기고 피드백은 생략한다.
+                feedback = RecycleActionMsg.Feedback()
+                if hasattr(feedback, 'status'):
+                    feedback.status = status
+                    goal_handle.publish_feedback(feedback)
+                last_status = status
+            if done:
+                return success, reason
+            next_tick += self.config.control_period_sec
+            delay = next_tick - time.monotonic()
+            if delay > 0:
+                self.cancel_event.wait(delay)
+            else:
+                # Do not issue a burst of catch-up commands after a scheduling stall.
+                next_tick = time.monotonic()
+        return False, 'SHUTDOWN: 추적 노드 종료'
 
-
-                    # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
-                msg = Twist()
-                # 0.2 -> 0.05
-                msg.angular.z = (1 if diff > 0 else -1) * 0.05
-                self.cmd_vel_pub.publish(msg)
-                    
-                time.sleep(0.05) # 너무 자주 보내지 않게 잠시 대기
-
-                    # 4. 정렬 조건 (오차 20픽셀 이내)
-                if abs(diff) < 10:
-                    self.get_logger().info(f"정렬 성공! 오차 픽셀: {diff:.2f}")
-                    break
-
-
-        self.cmd_vel_pub.publish(Twist()) # 정렬 완료 시 정지
-
-    
-        return True
-
-# 박스가 없어지는 문제. 
-    def approach_robot(self, goal_handle):
-
-        target_x = self.latest_object.coord[0]
-        #target_x = current_x
-        diff = 350 - target_x # 화면 중앙(320)과 현재 물체 위치의 차이
-                # 3. 회전 명령 (오른쪽에 있으면 양수, 왼쪽에 있으면 음수)
-
-        if abs(diff) >= 10:
-            if not self.align_robot(goal_handle, target_x):
-                return False    
-
-        
-
-        # 로봇이 직진하는 속력.
-        velocity = 0.10
-        # 이 시간동안 움직여라. 
-        probe_duration = 1.0
-        # while self.latest_object is None:
-        #     self.get_logger().info("접근 전 YOLO 데이터 대기 중...", throttle_duration_sec=2.0)
-        #     time.sleep(0.05)
-        last_approach_time = 3.0
-        while rclpy.ok():
+    def execute_callback(self, goal_handle):
+        success = False
+        message = 'INTERNAL_ERROR: 추적이 정상 종료되지 않음'
+        cleanup_ok = False
+        try:
+            with self._state_lock:
+                self._publish_command()
             if self.cancel_event.is_set() or goal_handle.is_cancel_requested:
-                self.get_logger().warn("🛑 APPROACH 강제 종료")
-                self.cmd_vel_pub.publish(Twist())
-                return False
+                message = 'STOP'
+            else:
+                tracking_ok, tracking_reason = self.call_tracking_srv(
+                    True, int(goal_handle.request.index)
+                )
+                if not tracking_ok:
+                    if tracking_reason == 'VISION_NOT_READY':
+                        message = 'VISION_NOT_READY: YOLO 결과 스트림이 아직 준비되지 않음'
+                    else:
+                        message = f'SERVICE_ERROR: YOLO 추적 모드 활성화 실패 ({tracking_reason})'
+                else:
+                    success, message = self._run_control(goal_handle)
+        except Exception as exc:
+            self.get_logger().error(f'Tracking 예외: {exc}')
+            message = f'INTERNAL_ERROR: {type(exc).__name__}: {exc}'
+            success = False
+        finally:
+            # Stop BEFORE a potentially slow service call on every exit path.
+            with self._state_lock:
+                self._controller = None
+                try:
+                    self._publish_command()
+                except Exception as exc:
+                    self.get_logger().error(f'정지 명령 발행 실패: {exc}')
+            cleanup_ok, cleanup_reason = self.call_tracking_srv(False, -1, honor_cancel=False)
+
+        try:
+            result = RecycleActionMsg.Result()
+            canceled = self.cancel_event.is_set() or goal_handle.is_cancel_requested
+            if canceled:
+                success = False
+                message = 'STOP'
+            elif not cleanup_ok and message.startswith('SENSOR_STALE:'):
+                # Keep the primary fault identifiable. A guarded new action will
+                # explicitly re-establish tracking mode before moving again.
+                success = False
+                message += '; CLEANUP_UNCONFIRMED: 추적 모드 해제 응답 없음; 재개 전 서비스 재확인'
+            elif not cleanup_ok:
+                success = False
+                message = (
+                    f'SERVICE_ERROR: YOLO 추적 모드 해제 확인 실패 ({cleanup_reason}); {message}'
+                )
+            result.success = success
+            result.message = message
+            # Only call canceled() once ROS has actually entered CANCELING.
             if goal_handle.is_cancel_requested:
-                self.get_logger().warn("🛑 접근 중 Tracking 취소")
+                goal_handle.canceled()
+            elif success:
+                goal_handle.succeed()
+            else:
+                goal_handle.abort()
+            self.get_logger().info(f'Tracking result: {message}')
+            return result
+        finally:
+            with self._goal_lock:
+                self._goal_busy = False
 
-                self.cmd_vel_pub.publish(Twist())
-                return False
-
-            if self.latest_object is None:
-                # 감지를 못할때는 정말 천천히 움직이면서 물체를 감지하도록 한다.
-                slow_motion = 0.02
-                msg = Twist()
-                msg.linear.x = slow_motion
-                self.cmd_vel_pub.publish(msg)
-                time.sleep(0.2)
-                self.cmd_vel_pub.publish(Twist())
-                continue
-            
-            # current_h = self.latest_object.coord[3]
-
-            current_h = self.latest_object.coord[3]
-            current_y = self.latest_object.coord[1]
-            # later_h = self.latest_object.coord[3]
-            lower_y = current_y + (current_h/2)
-            # self.get_logger().info("박스 위 y좌표 = {}".format(lower_y))            
-
-            # if lower_y >= 430:
-                # msg = Twist()
-                # msg.linear.x = velocity
-
-                # ## 아래 두 줄은 0.10(velocity)m/s로 probe_duration(1초)동안 움직여라.
-                # self.cmd_vel_pub.publish(msg)
-                # time.sleep(last_approach_time)
-                # break
-
-            if lower_y >= 430:
-                if not self.move_forward_with_cancel(
-                    goal_handle, last_approach_time, velocity
-                ):
-                    return False
-
-                break
-
-            msg = Twist()
-            msg.linear.x = velocity
-
-                ## 아래 두 줄은 0.10(velocity)m/s로 probe_duration(1초)동안 움직여라.
-            # self.cmd_vel_pub.publish(msg)
-            # time.sleep(probe_duration)
-                
-
-            if not self.move_forward_with_cancel(
-                goal_handle, probe_duration, velocity
-            ):
-                return False
-            self.cmd_vel_pub.publish(Twist())
-
-
-        self.cmd_vel_pub.publish(Twist()) # 접근 완료 시 정지
-
-        self.get_logger().info("접근 완료")
-
-        return True
-
-            # h_current = self.latest_object.coord[3]
-
-#     def approach_robot(self, goal_handle):
-
-#         non_tracking_velocity = 0.03
-#         probe_duration = 0.5
-#         start_time = self.get_clock().now()
-
-#         total_no_detect_time = 0
-#         #slow_motion is 0.05 -> 0.01
-#         slow_motion = 0.02
-#         while self.latest_object is None:
-#             st = self.get_clock().now()
-#             self.get_logger().info("접근 전 YOLO 데이터 대기 중...", throttle_duration_sec=2.0)
-#             msg = Twist()
-#             msg.linear.x = slow_motion
-#             self.cmd_vel_pub.publish(msg)
-#             time.sleep(0.2)
-#             self.cmd_vel_pub.publish(Twist())
-#             et = self.get_clock().now()
-#             total_no_detect_time += (et - st)
-         
-            
-#         h1 = self.latest_object.coord[3]
-        
-#         total_move_time = 0.0
-#         self.get_logger().info(f"접근 루프 시작 (초기 h1: {h1:.2f})")
-        
-#         # [수정] 시작 시간 기록을 루프 외부로 뺍니다.
-#         while rclpy.ok():
-
-#             msg = Twist()
-#             msg.linear.x = non_tracking_velocity
-#             self.cmd_vel_pub.publish(msg)
-
-#             time.sleep(probe_duration)
-
-#             # [수정] 누적 시간 대신 정확한 경과 시간을 계산
-#             now = self.get_clock().now()
-#             total_move_time = (now - start_time).nanoseconds * 1e-9
-       
-
-#             if self.latest_object is None:
-#                 continue
-
-#             h_current = self.latest_object.coord[3]
-
-#             diff = h_current - h1
-
-#             self.get_logger().info(
-#                 f"접근 중: 현재 높이={h_current:.2f} 높이 차이={diff:.2f}"
-#             )
-
-# # 실제 코드 구현시 데이터 통신 및 잡음 문제로 인해, 이상적인 값이 안나올 수 있으니 일정 비율만큼만 고려한다.
-#             if diff >= 0.10*h1:
-#                 break
-
-#             if total_move_time >= 10.0:
-
-#                 self.get_logger().error(
-#                     "{}초 동안 높이 변화 없음".format(total_move_time)
-#                 )
-
-#                 self.cmd_vel_pub.publish(Twist())
-
-#                 return False
-#         self.cmd_vel_pub.publish(Twist())
-
-#         velocity = 0.1
-#         d = non_tracking_velocity * total_move_time + slow_motion * total_no_detect_time
-
-#         Z = d * (h_current / diff) 
-#         Z = Z - (1.0*d)
-
-#         self.get_logger().info(
-#             f"계산 거리 = {Z:.3f}"
-#         )
-
-#         remaining = max(0.0, Z - 0.05)
-
-#         move_time = remaining / velocity
-#         self.get_logger().info(f"남은 거리 {remaining:.3f}m 만큼 {move_time:.2f}초간 최종 전진합니다.")
-
-#         msg = Twist()
-#         msg.linear.x = velocity
-#         self.cmd_vel_pub.publish(msg)
-#         time.sleep(move_time)
-#         self.cmd_vel_pub.publish(Twist())
-#         self.get_logger().info("접근 완료")
-#         return True
-
-    # def approach_robot(self, goal_handle):
-    #     non_tracking_velocity = 0.03
-    #     slow_motion = 0.02
-
-    #     # 1. YOLO 탐지될 때까지 저속 접근
-    #     while self.latest_object is None:
-    #         self.get_logger().info("접근 전 YOLO 데이터 대기 중...", throttle_duration_sec=2.0)
-    #         msg = Twist()
-    #         msg.linear.x = slow_motion
-    #         self.cmd_vel_pub.publish(msg)
-    #         time.sleep(0.2)
-    #         self.cmd_vel_pub.publish(Twist())
-
-    #     h1 = self.latest_object.coord[3]
-    #     self.get_logger().info(f"접근 루프 시작 (초기 h1: {h1:.2f})")
-
-    #     # 트래킹 루프 전용 시작 시각 (여기서부터 이동 거리 m만 계산)
-    #     track_start_time = self.get_clock().now()
-    #     probe_duration = 0.5
-    #     m = 0.0
-    #     h_current = h1
-    #     diff = 0.0
-
-    #     # 2. 실제 접근 + 높이 변화 트래킹
-    #     while rclpy.ok():
-    #         msg = Twist()
-    #         msg.linear.x = non_tracking_velocity
-    #         self.cmd_vel_pub.publish(msg)
-    #         time.sleep(probe_duration)
-
-    #         now = self.get_clock().now()
-    #         elapsed = (now - track_start_time).nanoseconds * 1e-9
-    #         m = elapsed * non_tracking_velocity  # 트래킹 시작 이후 실제 이동 거리
-
-    #         if self.latest_object is None:
-    #             continue
-
-    #         h_current = self.latest_object.coord[3]
-    #         diff = h_current - h1
-
-    #         self.get_logger().info(f"접근 중: 현재 높이={h_current:.2f} 높이 차이={diff:.2f}")
-
-    #         if diff >= 0.20 * h1:
-    #             break
-
-    #         if elapsed >= 10.0:
-    #             self.get_logger().error(f"{elapsed:.1f}초 동안 높이 변화 없음")
-    #             self.cmd_vel_pub.publish(Twist())
-    #             return False
-
-    #     self.cmd_vel_pub.publish(Twist())
-
-    #     # 3. 남은 거리 계산 (R지점 기준 거리 Z_R - 이미 이동한 m)
-    #     remaining = m * h1 / diff
-    #     remaining = max(0.0, remaining - 0.1)  # 안전 마진
-
-    #     velocity = 0.1
-    #     move_time = remaining / velocity
-    #     self.get_logger().info(f"남은 거리 {remaining:.3f}m 만큼 {move_time:.2f}초간 최종 전진합니다.")
-
-    #     msg = Twist()
-    #     msg.linear.x = velocity
-    #     self.cmd_vel_pub.publish(msg)
-    #     time.sleep(move_time)
-    #     self.cmd_vel_pub.publish(Twist())
-
-    #     self.get_logger().info("접근 완료")
-    #     return True
+    def request_shutdown(self):
+        self.shutdown_event.set()
+        self.cancel_event.set()
+        with self._state_lock:
+            if self._controller is not None:
+                self._controller.cancel()
+            try:
+                self._publish_command()
+            except Exception:
+                pass  # Context may already be invalid after a ROS signal handler.
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = RecycleTrackingNode()
-    executor = MultiThreadedExecutor(num_threads=3)
-    executor.add_node(node)
-
+    node = None
+    executor = None
     try:
+        node = RecycleTrackingNode()
+        executor = MultiThreadedExecutor(num_threads=3)
+        executor.add_node(node)
         executor.spin()
-    except KeyboardInterrupt:
-        node.get_logger().info("시그널 감지: 노드를 종료합니다.")
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
-        executor.shutdown()
-        node.destroy_node()
-
+        if node is not None:
+            node.request_shutdown()
+        if executor is not None:
+            executor.shutdown()
+        if node is not None:
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
