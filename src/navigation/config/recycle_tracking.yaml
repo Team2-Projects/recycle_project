@@ -54,9 +54,9 @@ recycle_tracking_node:
     approach_mid_speed: 0.04
     approach_near_speed: 0.02
 
-    stop_only_test_mode: true
+    stop_only_test_mode: false
     # Only set true after measuring actual remaining distance on the robot.
-    final_approach_calibrated: false
+    final_approach_calibrated: true
     final_approach_speed: 0.03
     # NOMINAL 30 cm / 0.03 m/s. Disabled by default. Not 30 cm measured by odometry.
     final_approach_duration_sec: 10.0
