@@ -20,7 +20,7 @@ clf_idx = {
 
 # OpenVINO 분류 모델 경로
 model_path = (
-    '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
+    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
     '0907_classify_model_openvino/classify_model.xml'
 )
 
@@ -40,7 +40,7 @@ class YoloNode(Node):
         # # 3. 모델 로드
         # self.model = YOLO(model_path)
         self.model = YOLO(
-    '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
+    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
     task='segment'
 )
         
@@ -88,8 +88,15 @@ class YoloNode(Node):
         )
 
         
-        
-        if self.pred_class == 1:
+        if self.pred_class == 0:
+            best_name = None
+            best_idx = None
+            coord = None
+
+            cv2.imshow("YOLO Python Node", frame)
+            cv2.waitKey(10)
+
+        elif self.pred_class == 1:
             results = self.model.predict(source=frame, imgsz=640, conf=conf_threshold, verbose=False)
             res = results[0]
             if len(res.boxes) > 0:
@@ -129,6 +136,7 @@ class YoloNode(Node):
 
                 cv2.imshow("YOLO Python Node", frame)
                 cv2.waitKey(10)
+
               # res_plotted_rgb = res.plot()
               # res_plotted_bgr = cv2.cvtColor(res_plotted_rgb, cv2.COLOR_RGB2BGR)
               # cv2_imshow(res_plotted_bgr)

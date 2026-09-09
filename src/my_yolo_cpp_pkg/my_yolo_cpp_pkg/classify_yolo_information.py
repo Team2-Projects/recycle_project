@@ -21,7 +21,7 @@ from rclpy.qos import (
 
 # OpenVINO 분류 모델 경로
 model_path = (
-    '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
+    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
     '0907_classify_model_openvino/classify_model.xml'
 )
 
@@ -49,7 +49,7 @@ class YoloNode(Node):
 
         # YOLO 모델 로드
         self.model = YOLO(
-            '/home/user/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
+            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
             task='segment'
         )
 
@@ -129,6 +129,7 @@ class YoloNode(Node):
             '/yolo/image/compressed',
             image_qos
         )
+        self.last_detection_log_time = 0.0
 
     # =====================================
     # 객체 안정성 정보 초기화
@@ -315,6 +316,7 @@ class YoloNode(Node):
         # 1단계: 분류 모델
         # =====================================
 
+        frame_classify = frame/255.0
         result = self.compiled_classify_model(
             {
                 self.input_key:
@@ -330,9 +332,18 @@ class YoloNode(Node):
         # Background
         # =====================================
 
-        if self.pred_class == 100:
+        if self.pred_class == 0:
 
-            self.get_logger().info(f'물체를 발견하지 못했습니다. result[0]: {result[0]}')
+            now = time.time()
+
+            if now - self.last_detection_log_time >= 2.0:
+
+                self.get_logger().info(
+                    f'물체를 발견하지 못했습니다. result[0]: {result[0]}'
+                )
+
+                self.last_detection_log_time = now
+
             msg_data.id = -1
             msg_data.confidence = 0.0
             msg_data.coord = [
@@ -351,9 +362,19 @@ class YoloNode(Node):
         # Object 존재 → YOLO 실행
         # =====================================
 
-        # elif self.pred_class == 1:
-        else:
-            self.get_logger().info(f'물체를 발견하였습니다. result[0]: {result[0]}')
+        elif self.pred_class == 1:
+   
+
+            now = time.time()
+
+            if now - self.last_detection_log_time >= 2.0:
+
+                self.get_logger().info(
+                    f'물체를 발견하였습니다. result[0]: {result[0]}'
+                )
+
+                self.last_detection_log_time = now
+
             results = self.model.predict(
                 source=frame,
                 imgsz=640,
