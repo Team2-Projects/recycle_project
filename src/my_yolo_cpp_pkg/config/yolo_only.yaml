@@ -1,0 +1,20 @@
+# Default perception path. Legacy pre-classifier is kept but NOT loaded here.
+# Relative model_path is resolved against this package (build --symlink-install).
+yolo_only_node:
+  ros__parameters:
+    model_path: "models/0907_yolo_openvino_model"
+    model_task: "segment"
+    image_topic: "/image_raw/compressed"
+    conf_threshold: 0.50
+    imgsz: 640
+    infer_fps: 5.0
+    expected_width: 640
+    expected_height: 480
+    align_reference_x: 350.0
+    approach_stop_lower_y: 430.0
+    required_frames: 2
+    allowed_class_ids: [0, 1, 2]
+    target_class_id: -1
+    max_local_frame_age_sec: 0.80
+    publish_debug_image: true
+    debug_image_fps: 5.0

@@ -4,6 +4,24 @@ from glob import glob
 
 package_name = 'my_yolo_cpp_pkg'
 
+
+def model_data_files():
+    """Install models/ into the package share so a plain colcon build works.
+
+    Without this, models/ never reaches install/ and a relative model_path only
+    resolves under --symlink-install. Prune unused exports from models/ to keep
+    the per-build copy small.
+    """
+    entries = []
+    for root, _dirs, files in os.walk('models'):
+        if not files:
+            continue
+        entries.append((
+            os.path.join('share', package_name, root),
+            [os.path.join(root, name) for name in files],
+        ))
+    return entries
+
 setup(
     name=package_name,
     version='0.0.0',
@@ -13,8 +31,9 @@ setup(
         ('share/' + package_name, ['package.xml']),
         # 이 부분이 가장 중요합니다!
         (os.path.join('share', package_name, 'msg'), glob('msg/*.msg')),
-        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py'))
-    ],
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+    ] + model_data_files(),
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='hee',
@@ -31,6 +50,7 @@ setup(
             'img_save_node = my_yolo_cpp_pkg.img_save:main', 
             'return_object_id_node = my_yolo_cpp_pkg.detected_object_id:main',
             'best_yolo_node = my_yolo_cpp_pkg.best_yolo_node:main',  
+            'yolo_only_info_node = my_yolo_cpp_pkg.yolo_only_information:main',
             'classified_object_info_node = my_yolo_cpp_pkg.classify_yolo_information:main',
             'custom_object_info_node = my_yolo_cpp_pkg.custom_yolo_information:main'  
         ],                    

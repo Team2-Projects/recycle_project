@@ -1,11 +1,16 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, Shutdown
+from launch.actions import IncludeLaunchDescription, Shutdown, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
+    default_params = os.path.join(
+        get_package_share_directory('navigation'), 'config', 'recycle_tracking.yaml',
+    )
+    params = LaunchConfiguration('tracking_params')
     # 1. 패키지 경로 설정 (nav2_bringup을 찾기 위함)
     nav2_bringup_dir = get_package_share_directory('nav2_bringup')
     
@@ -26,10 +31,11 @@ def generate_launch_description():
     # 3. 사용자 커스텀 노드들 정의
     coverage = Node(package='navigation', executable='coverage_node', name='coverage_node')
     recycle = Node(package='navigation', executable='recycle', name='recycle')
-    recycle_tracking = Node(package='navigation', executable='recycle_tracking_node', name='recycle_tracking_node')
-    auto_nav = Node(package='navigation', executable='auto_nav', name='auto_nav', on_exit=Shutdown())
+    recycle_tracking = Node(package='navigation', executable='recycle_tracking_node', name='recycle_tracking_node', parameters=[params], output='screen')
+    auto_nav = Node(package='navigation', executable='auto_nav', name='auto_nav', parameters=[params], on_exit=Shutdown())
 
     return LaunchDescription([
+        DeclareLaunchArgument('tracking_params', default_value=default_params),
         nav2_launch,
         coverage,
         recycle,
