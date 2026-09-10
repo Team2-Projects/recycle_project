@@ -22,7 +22,7 @@ from rclpy.qos import (
 # OpenVINO 분류 모델 경로
 model_path = (
     '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
-    '0907_classify_model_openvino/classify_model.xml'
+    '0909yolo_based(A)_last_openvino/model.xml'
 )
 
 
