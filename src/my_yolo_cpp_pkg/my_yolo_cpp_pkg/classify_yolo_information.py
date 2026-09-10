@@ -22,7 +22,7 @@ from rclpy.qos import (
 # OpenVINO 분류 모델 경로
 model_path = (
     '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
-    '0909yolo_based(A)_last_openvino/model.xml'
+    '0909yolo_based(A)_best_openvino/model.xml'
 )
 
 
@@ -316,11 +316,41 @@ class YoloNode(Node):
         # 1단계: 분류 모델
         # =====================================
 
-        frame_classify = frame/255.0
+        frame_classify = frame
+
+        # 640 x 640 canvas 생성
+        canvas = np.full(
+            (640, 640, 3),
+            114,
+            dtype=np.uint8
+        )
+
+        # 위에서부터 80 pixel padding
+        canvas[80:560, :, :] = frame_classify
+
+        frame_classify = canvas.astype(
+            np.float32
+        )
+
+        # 0~1 정규화
+        frame_classify /= 255.0
+
+        # HWC -> NCHW
+        frame_classify = np.transpose(
+            frame_classify,
+            (2, 0, 1)
+        )
+
+        # Batch dimension
+        frame_classify = np.expand_dims(
+            frame_classify,
+            axis=0
+        )
+
         result = self.compiled_classify_model(
             {
                 self.input_key:
-                frame.reshape(1, 480, 640, 3)
+                frame_classify
             }
         )[self.output_key]
 

@@ -21,7 +21,7 @@ clf_idx = {
 # OpenVINO 분류 모델 경로
 model_path = (
     '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
-    '0909yolo_based(A)_last_openvino/model.xml'
+    '0909yolo_based(A)_best_openvino/model.xml'
 )
 
 class YoloNode(Node):
@@ -71,77 +71,172 @@ class YoloNode(Node):
 
     def listener_callback(self, msg):
 
-        conf_threshold = self.get_parameter('conf').get_parameter_value().double_value
-        np_arr = np.frombuffer(msg.data, np.uint8)
-        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        conf_threshold = (
+            self.get_parameter('conf')
+            .get_parameter_value()
+            .double_value
+        )
 
+        np_arr = np.frombuffer(msg.data, np.uint8)
+
+        # --------------------------------------------------------
+        # 원본 frame
+        # YOLO용
+        # --------------------------------------------------------
+
+        frame = cv2.imdecode(
+            np_arr,
+            cv2.IMREAD_COLOR
+        )
+
+
+        # ========================================================
+        # 분류 모델 입력
+        # ========================================================
+
+        frame_classify = frame
+
+        # 640 x 640 canvas 생성
+        canvas = np.full(
+            (640, 640, 3),
+            114,
+            dtype=np.uint8
+        )
+
+        # 위에서부터 80 pixel padding
+        canvas[80:560, :, :] = frame_classify
+
+        frame_classify = canvas.astype(
+            np.float32
+        )
+
+        # 0~1 정규화
+        frame_classify /= 255.0
+
+        # HWC -> NCHW
+        frame_classify = np.transpose(
+            frame_classify,
+            (2, 0, 1)
+        )
+
+        # Batch dimension
+        frame_classify = np.expand_dims(
+            frame_classify,
+            axis=0
+        )
+
+        # ========================================================
+        # OpenVINO 분류
+        # ========================================================
 
         classify_result = self.compiled_classify_model(
             {
-                self.input_key:
-                frame.reshape(1, 480, 640, 3)
+                self.input_key: frame_classify
             }
         )[self.output_key]
 
         self.pred_class = np.argmax(
-            classify_result [0]
+            classify_result[0]
         )
 
-        
+
+        # ========================================================
+        # Background
+        # ========================================================
+
         if self.pred_class == 0:
+
             best_name = None
             best_idx = None
             coord = None
 
-            cv2.imshow("YOLO Python Node", frame)
+            cv2.imshow(
+                "YOLO Python Node",
+                frame
+            )
             cv2.waitKey(10)
 
+
+        # ========================================================
+        # Object
+        # ========================================================
+
         elif self.pred_class == 1:
-            results = self.model.predict(source=frame, imgsz=640, conf=conf_threshold, verbose=False)
+
+            results = self.model.predict(
+                source=frame,
+                imgsz=640,
+                conf=conf_threshold,
+                verbose=False
+            )
+
             res = results[0]
+
             if len(res.boxes) > 0:
-                  # 2. 모든 객체의 신뢰도(conf)를 가져와서 가장 높은 인덱스를 찾음
-                  # res.boxes.conf는 텐서 형태이므로 리스트로 변환 후 사용
+
                 confidences = res.boxes.conf.tolist()
-                max_conf_idx = confidences.index(max(confidences))
 
-                  # 3. 가장 높은 신뢰도를 가진 객체의 클래스 ID 추출
-                best_cls_id = int(res.boxes.cls[max_conf_idx].item())
+                max_conf_idx = confidences.index(
+                    max(confidences)
+                )
+
+                best_cls_id = int(
+                    res.boxes.cls[max_conf_idx].item()
+                )
+
                 best_name = res.names[best_cls_id]
-                best_idx = clf_idx[best_name]
-                coord = res.boxes.xywh[max_conf_idx].tolist()
 
-                x,y,w,h = coord
-              # print(x,y,w,h)
-                pt1_x = int(x - (w/2))
-                pt1_y = int(y - (h/2))
-                pt2_x = int(x + (w/2))
-                pt2_y = int(y + (h/2))
+                best_idx = clf_idx[best_name]
+
+                coord = res.boxes.xywh[
+                    max_conf_idx
+                ].tolist()
+
+                x, y, w, h = coord
+
+                pt1_x = int(x - (w / 2))
+                pt1_y = int(y - (h / 2))
+                pt2_x = int(x + (w / 2))
+                pt2_y = int(y + (h / 2))
 
                 org_x = pt1_x - 5
                 org_y = pt1_y - 5
-                  
-                cv2.rectangle(frame, (pt1_x, pt1_y), (pt2_x, pt2_y), (0, 40, 200), 3)
-                cv2.putText(frame, best_name, (org_x, org_y), cv2.FONT_HERSHEY_SIMPLEX, fontScale = 2, thickness = 3, color = (255, 0, 0))
-                cv2.imshow("YOLO Python Node", frame)
-                # cv2.imshow("img", frame)
+
+                cv2.rectangle(
+                    frame,
+                    (pt1_x, pt1_y),
+                    (pt2_x, pt2_y),
+                    (0, 40, 200),
+                    3
+                )
+
+                cv2.putText(
+                    frame,
+                    best_name,
+                    (org_x, org_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    2,
+                    (255, 0, 0),
+                    3
+                )
+
+                cv2.imshow(
+                    "YOLO Python Node",
+                    frame
+                )
                 cv2.waitKey(10)
 
-
-
             else:
+
                 best_name = None
                 best_idx = None
                 coord = None
 
-                cv2.imshow("YOLO Python Node", frame)
+                cv2.imshow(
+                    "YOLO Python Node",
+                    frame
+                )
                 cv2.waitKey(10)
-
-              # res_plotted_rgb = res.plot()
-              # res_plotted_bgr = cv2.cvtColor(res_plotted_rgb, cv2.COLOR_RGB2BGR)
-              # cv2_imshow(res_plotted_bgr)
-
-              # cv2_imshow(frame_bgr)
             
 # --------------
 
