@@ -1,7 +1,7 @@
 # Integrated defaults: lost_abort_frames=12, approach_far_speed=0.08 (user settings).
 # Robot-verified base behavior is preserved; the vision-health degradation/recovery
 # thresholds below are newly added and still need one real-robot timing check.
-# Default = visual-stop test. Final open-loop motion is doubly gated OFF.
+# Uploaded branch collection mode is preserved; final motion is enabled/calibrated.
 # Same calibration: 640x480 image, fixed pan/tilt capture pose, x=350, bottom=430.
 recycle_tracking_node:
   ros__parameters:
@@ -58,9 +58,35 @@ recycle_tracking_node:
     # Only set true after measuring actual remaining distance on the robot.
     final_approach_calibrated: true
     final_approach_speed: 0.03
-    # NOMINAL 30 cm / 0.03 m/s. Disabled by default. Not 30 cm measured by odometry.
+    # NOMINAL 30 cm / 0.03 m/s. Not 30 cm measured by odometry.
     final_approach_duration_sec: 10.0
     tracking_service_timeout_sec: 3.0
+
+    # Collision guard: Phase 2/3 parameters. Only tracking owns this chain;
+    # Nav2 patrol and recycle.py keep their existing velocity path.
+    collision_scan_timeout_sec: 0.40
+    collision_raw_timeout_sec: 0.50
+    collision_safe_timeout_sec: 0.50
+    collision_watchdog_period_sec: 0.05
+    collision_ready_timeout_sec: 3.0
+    collision_fault_timeout_sec: 3.0
+    collision_hold_timeout_sec: 3.0
+    collision_hold_clear_ratio: 0.80
+    collision_hold_clear_frames: 3
+    collision_clear_min_interval_sec: 0.04
+    collision_linear_zero_threshold: 0.002
+    collision_angular_zero_threshold: 0.005
+    collision_modification_tolerance: 0.00001
+    # Test-calibrated capture pose: do not silently reuse Nav2's older +0.268.
+    # Changing these requires matching HardStop.points below.
+    collision_footprint_front_x: 0.325
+    collision_footprint_rear_x: -0.196
+    collision_footprint_half_width: 0.14
+    collision_hard_stop_margin: 0.01
+    collision_geometry_timeout_sec: 1.0
+    # Pi and PC system clocks must agree. A stale/future stamped scan is NOT
+    # made safe by a new receipt; fail closed instead of rewriting timestamps.
+    collision_future_stamp_tolerance_sec: 0.10
 
 auto_nav:
   ros__parameters:
@@ -71,3 +97,51 @@ auto_nav:
     sensor_recovery_frames: 3
     sensor_recovery_min_interval_sec: 0.05
     sensor_recovery_max_interval_sec: 1.20
+
+
+# Humble-only parameter names (Twist, flat double array, max_points).
+tracking_collision_monitor:
+  ros__parameters:
+    use_sim_time: false
+    base_frame_id: "base_footprint"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "/tracking_cmd_vel_raw"
+    cmd_vel_out_topic: "/tracking_cmd_vel_safe"
+    transform_tolerance: 0.3
+    source_timeout: 0.40
+    base_shift_correction: false
+    # Humble stops publishing repeated zero velocities after this timeout.
+    # Private output cannot affect patrol; retain zero replies for watchdogs
+    # and future actions, including long periods spent idling between actions.
+    stop_pub_timeout: 1000000000.0
+    polygons: ["HardStop", "FootprintApproach"]
+    HardStop:
+      type: "polygon"
+      points: [0.335, 0.15, 0.335, -0.15, -0.206, -0.15, -0.206, 0.15]
+      action_type: "stop"
+      max_points: 0
+      visualize: true
+      polygon_pub_topic: "/tracking_collision/hard_stop"
+      enabled: true
+    FootprintApproach:
+      type: "polygon"
+      action_type: "approach"
+      footprint_topic: "/tracking_collision/footprint"
+      time_before_collision: 2.0
+      simulation_time_step: 0.1
+      max_points: 3
+      visualize: true
+      polygon_pub_topic: "/tracking_collision/footprint_checked"
+      enabled: true
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan"
+      enabled: true
+
+lifecycle_manager_tracking_collision:
+  ros__parameters:
+    use_sim_time: false
+    autostart: true
+    node_names: ["tracking_collision_monitor"]
+    bond_timeout: 4.0

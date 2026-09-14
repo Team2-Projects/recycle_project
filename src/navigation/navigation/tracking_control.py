@@ -217,12 +217,17 @@ class RecoveryCounter:
 class TrackingController:
     """Single-goal FSM. The ROS adapter serializes observe()/step()/cancel()."""
 
-    def __init__(self, config: TrackingConfig, target_class: int, now: float):
+    def __init__(self, config: TrackingConfig, target_class: int, now: float,
+                 defer_final_motion: bool = False):
         if target_class < 0:
             raise ValueError('target_class must be a nonnegative class ID')
         self.config = config
         self.target_class = target_class
         self.phase = Phase.ALIGN
+        self.safety_paused = False
+        self.safety_release_sequence = -1
+        self.defer_final_motion = defer_final_motion
+        self.final_motion_armed = not defer_final_motion
         self.reason = ''
         self.started_at = now
         self.alignment_started_at = now
@@ -292,6 +297,39 @@ class TrackingController:
         # Cancellation wins even between completion and ROS result publication.
         self.phase = Phase.CANCELED
         self.reason = 'STOP'
+
+    def pause_for_safety(self):
+        """Keep receiving vision heartbeats but freeze phase/close confirmations."""
+        if not self.done:
+            self.safety_paused = True
+            self.aligned_frames = 0
+            self.close_frames = 0
+
+    def resume_after_safety(self, now: float):
+        """Require NEW detections to realign; preserve the whole-action budget."""
+        if self.done or self.phase == Phase.FINAL_APPROACH:
+            return False
+        self.safety_paused = False
+        self.safety_release_sequence = self.last_sequence
+        self.phase = Phase.ALIGN if self.approach_started_at is None else Phase.REALIGN
+        # Keep the original initial-alignment deadline. Re-alignments remain
+        # bounded by the original whole-approach deadline (never reset it).
+        if self.approach_started_at is not None:
+            self.alignment_started_at = now
+        self.sensor_wait_started_at = None
+        self.sensor_resume_phase = None
+        self.recovery.reset()
+        self.aligned_frames = self.close_frames = self.lost_frames = 0
+        self.last_valid_lower_y = None
+        self.best_alignment_error = None
+        self._mark_progress(now)
+        return True
+
+    def arm_final_motion(self, now: float):
+        """Start final timer on the FIRST unmodified, safety-approved output."""
+        if self.phase == Phase.FINAL_APPROACH and not self.final_motion_armed:
+            self.final_started_at = now
+            self.final_motion_armed = True
 
     def _enter_sensor_wait(self, stale_at: float):
         # Open-loop final motion cannot safely resume based on wall-clock time:
@@ -460,6 +498,10 @@ class TrackingController:
             self._record_receive_gap(previous_at, observation.received_at)
             if self.done:
                 return
+        if self.safety_paused:
+            # A close bbox observed while collision-stopped is not permission
+            # to enter FINAL_APPROACH. A safety release requires fresh REALIGN.
+            return
         # Calibrated final motion is intentionally time-limited/open-loop. The
         # object may leave the camera, but message heartbeat is still required.
         if self.phase == Phase.FINAL_APPROACH:
@@ -540,6 +582,7 @@ class TrackingController:
                 else:
                     self.phase = Phase.FINAL_APPROACH
                     self.final_started_at = observation.received_at
+                    self.final_motion_armed = not self.defer_final_motion
 
     def _alignment_speed(self, error: float):
         cfg = self.config
@@ -569,11 +612,14 @@ class TrackingController:
     def step(self, now: float):
         """Return desired velocity. Does NOT increment any frame counter."""
         self._check_deadlines(now)
-        if self.done or self.phase == Phase.SENSOR_WAIT:
+        if self.done or self.phase == Phase.SENSOR_WAIT or self.safety_paused:
+            return Command()
+        if self.last_sequence <= self.safety_release_sequence:
             return Command()
         cfg = self.config
         if self.phase == Phase.FINAL_APPROACH:
-            if now - self.final_started_at >= cfg.final_approach_duration_sec:
+            if (self.final_motion_armed
+                    and now - self.final_started_at >= cfg.final_approach_duration_sec):
                 self.phase = Phase.SUCCEEDED
                 self.reason = 'SUCCESS: 정렬 및 제한 시간 보완접근 완료 (실제 포획 센서 확인 아님)'
                 return Command()

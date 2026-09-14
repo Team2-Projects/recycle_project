@@ -1,9 +1,8 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, Shutdown, DeclareLaunchArgument
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch_ros.actions import Node
 from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
@@ -28,17 +27,15 @@ def generate_launch_description():
         }.items()
     )
 
-    # 3. 사용자 커스텀 노드들 정의
-    coverage = Node(package='navigation', executable='coverage_node', name='coverage_node')
-    recycle = Node(package='navigation', executable='recycle', name='recycle')
-    recycle_tracking = Node(package='navigation', executable='recycle_tracking_node', name='recycle_tracking_node', parameters=[params], output='screen')
-    auto_nav = Node(package='navigation', executable='auto_nav', name='auto_nav', parameters=[params], on_exit=Shutdown())
-
+    # Keep the existing simulation entry point. Use the SAME tracking safety
+    # launch as the real robot so this path cannot bypass Collision Monitor.
+    project_nodes = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            get_package_share_directory('navigation'), 'launch', 'navigation.launch.py')),
+        launch_arguments={'tracking_params': params, 'use_sim_time': 'true'}.items(),
+    )
     return LaunchDescription([
         DeclareLaunchArgument('tracking_params', default_value=default_params),
         nav2_launch,
-        coverage,
-        recycle,
-        recycle_tracking,
-        auto_nav
+        project_nodes,
     ])

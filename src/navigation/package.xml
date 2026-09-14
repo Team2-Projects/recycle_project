@@ -8,6 +8,10 @@
   <license>TODO: License declaration</license>
 
   <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <exec_depend>tf2_ros_py</exec_depend>
+  <exec_depend>nav2_collision_monitor</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
   <depend>nav2_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>navigation_interface</depend>
@@ -25,6 +29,7 @@
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-yaml</test_depend>
 
   <export>
     <build_type>ament_python</build_type>
