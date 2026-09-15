@@ -13,6 +13,7 @@
   <exec_depend>nav2_collision_monitor</exec_depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <depend>nav2_msgs</depend>
+  <depend>lifecycle_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>navigation_interface</depend>
   <depend>my_yolo_msgs</depend>
@@ -25,9 +26,6 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 
-  <test_depend>ament_copyright</test_depend>
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
   <test_depend>python3-yaml</test_depend>
 

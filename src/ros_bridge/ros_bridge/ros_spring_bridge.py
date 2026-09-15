@@ -120,6 +120,10 @@ class SpringBridge(Node):
             10 
         )
 
+        self.create_subscription(
+            String, '/auto_nav/recovery_details', self.recovery_status_callback, 10
+        )
+
         # schedule_status
         self.create_subscription(
             String,
@@ -371,6 +375,20 @@ class SpringBridge(Node):
             self.get_logger().error(
                 f"robot_task error: {e}"
             )
+
+    def recovery_status_callback(self, msg):
+        try:
+            recovery = json.loads(msg.data)
+            if not isinstance(recovery, dict) or not isinstance(recovery.get('state'), str):
+                return
+            # Separate eventType: recovery telemetry must not overwrite the
+            # mission's Running/Return Home/Stop state or append task history.
+            self.send_ws({
+                'type': 'robot_status', 'eventType': 'recovery',
+                'status': recovery['state'], 'recovery': recovery,
+            })
+        except (ValueError, TypeError, AttributeError) as exc:
+            self.get_logger().warn(f'Recovery status error: {exc}')
     
     def schedule_status_callback(self, msg):
         try:

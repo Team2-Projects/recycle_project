@@ -431,7 +431,10 @@ class TrackingController:
             return
         if (self.approach_started_at is not None
                 and now - self.approach_started_at >= self.config.approach_timeout_sec):
-            timeout('APPROACH_TIMEOUT', '재정렬/수신대기/보완접근 포함 절대 접근 제한 시간 초과')
+            code = ('FINAL_APPROACH_INTERRUPTED' if self.phase == Phase.FINAL_APPROACH
+                    else 'APPROACH_TIMEOUT')
+            timeout(code, '재정렬/수신대기/보완접근 포함 절대 접근 제한 시간 초과; '
+                    '보완접근 남은 시간 자동 재시작 안 함')
             return
         active_phase = self.sensor_resume_phase if self.phase == Phase.SENSOR_WAIT else self.phase
         if (self.approach_started_at is not None

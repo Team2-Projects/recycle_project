@@ -85,6 +85,7 @@ def runtime(monkeypatch):
             self.params = {}
             self.pubs = {}
             self.subs = {}
+            self.sub_qos = {}
             self.timers = []
             self.logs = []
             self.tf_ok = True
@@ -103,6 +104,7 @@ def runtime(monkeypatch):
 
         def create_subscription(self, cls, topic, cb, qos, **kwargs):
             self.subs[topic] = cb
+            self.sub_qos[topic] = qos
             return NS()
 
         def create_client(self, *args, **kwargs):
@@ -117,7 +119,7 @@ def runtime(monkeypatch):
 
         def get_clock(self):
             def now():
-                ns = int((1700000000 + h.now) * 1e9)
+                ns = int((1700000000 + h.now + getattr(h, 'ros_offset', 0.)) * 1e9)
                 return NS(nanoseconds=ns,
                           to_msg=lambda: NS(sec=ns // 10**9, nanosec=ns % 10**9))
             return NS(now=now)
@@ -125,11 +127,18 @@ def runtime(monkeypatch):
         def get_logger(self):
             return NS(info=self.logs.append, warn=self.logs.append, error=self.logs.append)
 
+        def get_subscriptions_info_by_topic(self, topic):
+            if topic == '/tracking_collision/scan' and not getattr(self, 'legacy_scan_route', False):
+                return [NS(node_name='tracking_collision_monitor')]
+            return []
+
         def get_publishers_info_by_topic(self, topic):
             if topic == '/cmd_vel':
                 return [NS(node_name=name) for name in getattr(self, 'wheel_names',
                         ['recycle_tracking_node', 'auto_nav', 'controller_server', 'recycle'])]
-            names = ['recycle_tracking_node'] if topic.endswith('_raw') else ['tracking_collision_monitor']
+            names = (['recycle_tracking_node']
+                     if topic.endswith('_raw') or topic == '/tracking_collision/scan'
+                     else ['tracking_collision_monitor'])
             if self.extra_safe and topic.endswith('_safe'):
                 names.append('collision_monitor')
             return [NS(node_name=name) for name in names]
@@ -138,8 +147,11 @@ def runtime(monkeypatch):
         def __init__(self):
             self.ok = True
 
-        def can_transform(self, target, source, stamp):
-            return self.ok and target == 'base_footprint' and source == 'base_scan'
+        def can_transform(self, target, source, stamp, return_debug_tuple=False):
+            good = self.ok and target == 'base_footprint' and source == 'base_scan'
+            if return_debug_tuple:
+                return (good, '' if good else 'mock: base_scan transform missing')
+            return good
 
     modules = {
         'rclpy': {'ok': lambda: True},
@@ -150,7 +162,9 @@ def runtime(monkeypatch):
         'rclpy.executors': {'ExternalShutdownException': type('Shutdown', (Exception,), {}),
                             'MultiThreadedExecutor': object},
         'rclpy.node': {'Node': FakeNode},
-        'rclpy.qos': {'qos_profile_sensor_data': NS()},
+        'rclpy.qos': {'QoSProfile': lambda **kw: NS(**kw),
+                      'ReliabilityPolicy': NS(BEST_EFFORT=1),
+                      'DurabilityPolicy': NS(VOLATILE=1)},
         'rclpy.clock': {'Clock': lambda **kw: NS(), 'ClockType': NS(STEADY_TIME=1)},
         'rclpy.time': {'Time': lambda: NS()},
         'tf2_ros': {'Buffer': Buffer, 'TransformListener': lambda *a: NS()},
@@ -264,7 +278,7 @@ def test_correct_geometry_and_clock(runtime):
     h.now = .1
     h.environment()
     assert h.node._environment_ready(h.now) == (True, '')
-    h.node._scan_stamp_ns -= 2 * 10**9
+    h.node._scan.stamp_ns -= 2 * 10**9
     assert not h.node._environment_ready(h.now)[0]
 
 
@@ -272,8 +286,8 @@ def test_future_scan_rejected(runtime):
     h = runtime
     h.now = .1
     h.environment()
-    h.node._scan_stamp_ns += 10**9
-    assert h.node._environment_ready(.1)[1] == 'SCAN_STAMP_STALE_OR_CLOCK_SKEW'
+    h.node._scan.stamp_ns += 10**9
+    assert h.node._environment_ready(.1)[1] == 'SCAN_STAMP_FUTURE'
 
 
 def test_missing_tf_rejected(runtime):
@@ -469,7 +483,7 @@ def test_invalid_scan_stream_rejected(runtime):
     n._scan_callback(NS(header=NS(stamp=NS(sec=1700000000, nanosec=0), frame_id='base_scan'),
                         ranges=[math.nan, math.inf], range_min=0., range_max=100.,
                         angle_min=0., angle_max=6., angle_increment=.02))
-    assert n._scan_error == 'SCAN_INVALID'
+    assert n._scan.last_rejection == 'SCAN_INVALID'
 
 
 def test_slowed_to_physical_stall_is_not_generic_patrol_retry(runtime):
@@ -531,3 +545,209 @@ def test_old_live_guard_or_manual_writer_is_rejected(other, runtime):
     h.environment()
     h.node.wheel_names = ['recycle_tracking_node', other]
     assert h.node._environment_ready(.1)[1] == 'COLLISION_TOPIC_OWNERSHIP'
+
+
+def test_advancing_clock_between_function_calls_no_false_raw_stale(runtime):
+    """This test FAILS on the original adapter despite its 89 passing tests."""
+    h = runtime
+
+    def progressing_clock():
+        h.now += .0001  # represent time spent between real Python calls
+        return h.now
+
+    h.mod.time = NS(monotonic=progressing_clock)
+    result = h.node.execute_callback(h.goal)
+    assert result.message.startswith('TEST_STOP:'), result.message
+    assert 'RAW_STALE' not in states(h)
+    assert 'RAW_RECEIPT_CLOCK_ORDER' not in states(h)
+    assert 'SAFETY_UNAVAILABLE' not in states(h)
+    assert any(m.linear.x > 0 for m in h.node.cmd_vel_pub.messages)
+
+
+def make_scan(h, offset=0., stamp_ns=None, frame='base_scan'):
+    ns = (h.node.get_clock().now().nanoseconds + round(offset * 1e9)
+          if stamp_ns is None else stamp_ns)
+    return NS(header=NS(stamp=NS(sec=ns // 10**9, nanosec=ns % 10**9), frame_id=frame),
+              angle_min=0., angle_max=6.28, angle_increment=.025,
+              range_min=0., range_max=100., ranges=[2., 2., 3., 4.])
+
+
+def test_monitor_only_receives_accepted_original_stamped_scans(runtime):
+    h = runtime
+    h.now = .1
+    good = make_scan(h)
+    h.node._scan_callback(good)
+    assert h.node._scan_pub.messages == [good]
+    h.now = .2
+    h.node._scan_callback(good)  # duplicate
+    h.node._scan_callback(make_scan(h, offset=-.15))  # out of order
+    bad = make_scan(h)
+    bad.ranges = []
+    h.node._scan_callback(bad)
+    h.node._scan_callback(make_scan(h, offset=10.))  # future timestamp
+    assert h.node._scan_pub.messages == [good]
+    assert h.node._scan.sequence == 1
+    assert h.node._scan.health(h.now, h.node.get_clock().now().nanoseconds)[0]
+    h.now = .3
+    new = make_scan(h)
+    h.node._scan_callback(new)
+    assert h.node._scan_pub.messages[-1] is new
+    assert new.header.stamp == make_scan(h).header.stamp
+    assert new.header.frame_id == 'base_scan'
+
+
+def test_scan_subscription_depth_is_one_and_sensor_compatible(runtime):
+    n = runtime.node
+    # Pub holds no copy of the scan, and no timer re-publishes last-good data.
+    n._publish_footprint()
+    n._publish_diagnostics()
+    assert not n._scan_pub.messages
+    assert '/tracking_collision/scan' in n.pubs
+    assert '/scan' not in n.pubs
+    qos = n.sub_qos['/scan']
+    assert qos.depth == 1 and qos.reliability == 1  # fake BEST_EFFORT constant
+
+
+def test_diagnostics_show_numbers_and_source_of_failure(runtime):
+    import json
+    h = runtime
+    h.now = .1
+    h.environment()
+    h.node._tf_buffer.ok = False
+    assert h.node._environment_ready(h.now)[1] == 'SCAN_TF_UNAVAILABLE'
+    h.node._publish_diagnostics()
+    row = json.loads(h.node._diagnostic_pub.messages[-1].data)
+    assert row['revision'] == 'receipt_v1'
+    assert row['scan_rx_age_sec'] == pytest.approx(0.)
+    assert row['scan_stamp_age_sec'] == pytest.approx(0., abs=1e-6)
+    assert 'base_scan' in row['tf_error']
+    assert row['environment_reason'] == 'SCAN_TF_UNAVAILABLE'
+    assert 'NaN' not in h.node._diagnostic_pub.messages[-1].data
+    assert not h.node.cmd_vel_pub.messages  # diagnostics never authorize motion
+
+
+def test_permanent_skew_produces_explicit_cause_not_silent_ignore(runtime):
+    h = runtime
+    h.scan_on = False
+    h.env_hook = lambda: h.node._scan_callback(make_scan(h, offset=-2.))
+    result = h.node.execute_callback(h.goal)
+    assert not result.success and 'SCAN_STAMP_OLD' in result.message
+    assert not h.node._scan_pub.messages
+    assert all(m.linear.x == 0 and m.angular.z == 0 for m in h.node.cmd_vel_pub.messages)
+
+
+def test_scan_duplicate_interleaving_does_not_break_tracking(runtime):
+    h = runtime
+    latest = [None]
+    def hook():
+        # The good callback ran just before this one. Inject an older scan
+        # afterward -- the old adapter used to invalidate the whole stream.
+        if latest[0] is not None:
+            h.node._scan_callback(latest[0])
+        latest[0] = make_scan(h)
+    h.env_hook = hook
+    result = h.node.execute_callback(h.goal)
+    assert result.message.startswith('TEST_STOP:'), result.message
+    assert not any(s in states(h) for s in ('SCAN_STALE', 'SAFETY_UNAVAILABLE'))
+    assert h.node._scan.rejected_count > 0
+
+
+def test_brief_tf_failure_recovers_then_requires_new_visual_alignment(runtime):
+    h = runtime
+    h.env_hook = lambda: setattr(h.node._tf_buffer, 'ok', not (1.3 < h.now < 1.6))
+    result = h.node.execute_callback(h.goal)
+    assert result.message.startswith('TEST_STOP:'), result.message
+    assert 'SCAN_TF_UNAVAILABLE' in states(h)
+    assert 'SAFETY_RECOVERY' in states(h)
+    assert 'REALIGN_REQUIRED' in states(h)
+    assert all(x == 0 and z == 0 for t, state, x, z, phase in h.trace
+               if state in ('SCAN_TF_UNAVAILABLE', 'SAFETY_RECOVERY', 'REALIGN_REQUIRED'))
+
+
+def test_new_action_uses_ready_dwell_not_one_lucky_safe_message(runtime):
+    h = runtime
+    result = h.node.execute_callback(h.goal)
+    assert result.message.startswith('TEST_STOP:')
+    assert 'READY_CONFIRMING' in states(h)
+    # Earliest moving message in the trace must be after readiness dwell.
+    assert min(t for t, state, x, z, phase in h.trace if abs(x) + abs(z) > 0) >= .5
+
+
+def test_two_actions_can_use_same_live_node_and_scan_health(runtime):
+    h = runtime
+    first = h.node.execute_callback(h.goal)
+    assert first.message.startswith('TEST_STOP:')
+    # Simulate the operator/mission creating a new action; no node restart.
+    start = h.now
+    h.goal = Goal()
+    h.position = lambda t: (350., min(435., 280. + max(0., t - start - 1) * 45.))
+    second = h.node.execute_callback(h.goal)
+    assert second.message.startswith('TEST_STOP:'), second.message
+    assert not h.node._owns_cmd_vel
+
+
+def test_old_monitor_yaml_cannot_bypass_filtered_scan_route(runtime):
+    h = runtime
+    h.now = .1
+    h.environment()
+    h.node.legacy_scan_route = True
+    assert h.node._environment_ready(h.now)[1] == 'COLLISION_TOPIC_OWNERSHIP'
+
+
+def test_joint_ros_clock_step_back_does_not_poison_scan_high_watermark(runtime):
+    h = runtime
+    h.env_hook = lambda: setattr(h, 'ros_offset', -5. if h.now > 1.2 else 0.)
+    result = h.node.execute_callback(h.goal)
+    assert result.message.startswith('TEST_STOP:'), result.message
+    assert 'SAFETY_RECOVERY' in states(h)
+    assert 'REALIGN_REQUIRED' in states(h)
+    assert h.node._scan.sequence > 10
+
+
+@pytest.mark.parametrize('cost', [.000001, .0001, .001, .003])
+def test_variable_intra_tick_processing_costs_do_not_manufacture_raw_stale(cost, runtime):
+    h = runtime
+    def clock():
+        h.now += cost
+        return h.now
+    h.mod.time = NS(monotonic=clock)
+    result = h.node.execute_callback(h.goal)
+    assert result.message.startswith('TEST_STOP:'), result.message
+    assert 'RAW_STALE' not in states(h)
+    assert 'RAW_RECEIPT_CLOCK_ORDER' not in states(h)
+    assert not h.node._owns_cmd_vel
+
+
+def test_last_fault_is_preserved_in_terminal_result(runtime):
+    h = runtime
+    h.position = lambda t: (350., 300.)
+    h.env_hook = lambda: setattr(h, 'scan_on', False) if h.now > 1.2 else None
+    result = h.node.execute_callback(h.goal)
+    assert 'SAFETY_UNAVAILABLE:' in result.message
+    assert 'cause=SCAN_STALE' in result.message
+
+
+def test_diagnostic_publisher_failure_does_not_change_motion_or_state(runtime):
+    h = runtime
+    h.now = .1
+    h.environment()
+    def raise_publish(msg):
+        raise RuntimeError('diagnostic transport stopped')
+    h.node._diagnostic_pub.publish = raise_publish
+    h.node._publish_diagnostics()
+    assert not h.node._safety.failure
+    assert not h.node.cmd_vel_pub.messages
+
+
+def test_final_approach_with_progressing_clock_and_safe_inputs(runtime):
+    h = runtime
+    h.node.config = TrackingConfig(stop_only_test_mode=False, final_approach_calibrated=True)
+    def clock():
+        h.now += .0001
+        return h.now
+    h.mod.time = NS(monotonic=clock)
+    result = h.node.execute_callback(h.goal)
+    assert result.success and h.goal.state == 'SUCCEEDED', result.message
+    assert 'RAW_STALE' not in states(h)
+    final_times = [row[0] for row in h.trace if row[2] == .03 and row[4] == Phase.FINAL_APPROACH]
+    assert final_times and h.now - final_times[0] >= 10.

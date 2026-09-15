@@ -62,7 +62,7 @@ recycle_tracking_node:
     final_approach_duration_sec: 10.0
     tracking_service_timeout_sec: 3.0
 
-    # Collision guard: Phase 2/3 parameters. Only tracking owns this chain;
+    # Collision guard: only tracking owns this chain;
     # Nav2 patrol and recycle.py keep their existing velocity path.
     collision_scan_timeout_sec: 0.40
     collision_raw_timeout_sec: 0.50
@@ -70,6 +70,12 @@ recycle_tracking_node:
     collision_watchdog_period_sec: 0.05
     collision_ready_timeout_sec: 3.0
     collision_fault_timeout_sec: 3.0
+    # Receipt-v1: real scan + safe samples and a dwell, not repeated control ticks.
+    collision_recovery_stable_sec: 0.50
+    collision_recovery_frames: 3
+    collision_scan_restart_frames: 3
+    # Per Action; a repeatedly failing target is retired instead of retried forever.
+    collision_auto_recovery_limit: 2
     collision_hold_timeout_sec: 3.0
     collision_hold_clear_ratio: 0.80
     collision_hold_clear_frames: 3
@@ -90,10 +96,39 @@ recycle_tracking_node:
 
 auto_nav:
   ros__parameters:
+    # Same scan policy as Tracking above; parity is regression-tested.
+    # Humble's ROS parameter parser does not support YAML aliases.
+    collision_scan_timeout_sec: 0.40
+    collision_scan_restart_frames: 3
+    collision_clear_min_interval_sec: 0.04
+    collision_future_stamp_tolerance_sec: 0.10
     tracking_failure_cooldown_sec: 2.0
-    # SENSOR_STALE / VISION_NOT_READY can retry the same target with
-    # /auto_nav/resume_sensor_hold after three healthy results. Any safety hold
-    # can instead be explicitly abandoned with /auto_nav/reset_tracking_hold.
+    # Abandon a failed target and automatically resume patrol when
+    # common scan/TF/odom/Nav2 and verified servo closure are ready. Monitor-only
+    # failure disables collection, NOT otherwise-ready Nav2 patrol.
+    # Interrupted final motion retires the attempt, never resumes its
+    # remaining seconds or increments the collection count. Verify release,
+    # stopped odom, servo closure and common Nav2 readiness before patrol.
+    # TEST_STOP/operator cancellation/unknown internal errors stay manual.
+    # Manual reset queues the same readiness checks; it is NOT a bypass.
+    patrol_recovery_enabled: true
+    patrol_recovery_final_interrupted_enabled: true
+    patrol_recovery_period_sec: 0.20
+    patrol_recovery_stable_sec: 0.50
+    patrol_recovery_samples: 3
+    patrol_recovery_health_timeout_sec: 0.80
+    patrol_recovery_odom_timeout_sec: 0.60
+    patrol_recovery_future_stamp_tolerance_sec: 0.10
+    patrol_recovery_stopped_linear_speed: 0.01
+    patrol_recovery_stopped_angular_speed: 0.02
+    patrol_recovery_service_timeout_sec: 2.0
+    patrol_recovery_service_retry_sec: 3.0
+    patrol_recovery_nav_state_poll_sec: 0.50
+    patrol_recovery_nav_state_timeout_sec: 2.0
+    patrol_recovery_nav2_nodes: [controller_server, planner_server, bt_navigator]
+    # No instance tracker: lock ALL new collection until a waypoint SUCCEEDS
+    # after >=10cm real odom displacement, not mere timeout/visual disappearance.
+    patrol_recovery_release_distance_m: 0.10
     sensor_recovery_frames: 3
     sensor_recovery_min_interval_sec: 0.05
     sensor_recovery_max_interval_sec: 1.20
@@ -136,7 +171,9 @@ tracking_collision_monitor:
     observation_sources: ["scan"]
     scan:
       type: "scan"
-      topic: "/scan"
+      # Same ORIGINAL stamped scans as the guard accepted. Original /scan
+      # (and all Nav2 consumers) are untouched. Do not restore /scan here alone.
+      topic: "/tracking_collision/scan"
       enabled: true
 
 lifecycle_manager_tracking_collision:

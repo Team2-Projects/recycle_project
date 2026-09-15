@@ -25,7 +25,7 @@ def sample(s, t, raw=RAW, safe=None, phase='APPROACH', env=True, reason=''):
     s.request(raw, phase, t)
     if safe is not None:
         s.accept_safe(safe, t + 0.001)
-    return s.evaluate(t + 0.002, env, reason)
+    return s.evaluate(t + 0.002, env, reason, scan_sequence=round(t * 1000000))
 
 
 def observation(seq, t, bottom=300.0, x=350.0, cls=0):
@@ -161,12 +161,13 @@ def test_hold_deadline_not_reset_by_zero_probe():
     assert d.failure == 'COLLISION_BLOCKED'
 
 
-def test_hold_deadline_survives_missing_safe():
+def test_missing_safe_is_not_fresh_evidence_of_a_wall():
     s = CollisionSafety(CollisionConfig())
     sample(s, 0, safe=ZERO)
-    for i in range(1, 33):
+    for i in range(1, 40):
         d = sample(s, i / 10, safe=None)
-    assert d.failure == 'COLLISION_BLOCKED'
+    assert d.failure == 'SAFETY_UNAVAILABLE'
+    assert s.last_fault_reason == 'SAFE_STALE'
 
 
 def test_hold_requires_three_new_spaced_clear_samples():
@@ -240,12 +241,12 @@ def test_final_scan_interruption_before_completion():
     assert d.failure == 'FINAL_APPROACH_INTERRUPTED'
 
 
-def test_sensor_recovery_with_zero_raw_also_requires_three_samples():
+def test_sensor_recovery_with_zero_raw_requires_fresh_samples_and_dwell():
     s = CollisionSafety(CollisionConfig())
     sample(s, 0, ZERO, ZERO, env=False, reason='SCAN_STALE')
-    for t in [.1, .2]:
+    for t in [.1, .2, .3, .4, .5]:
         assert not sample(s, t, ZERO, ZERO).realign
-    assert sample(s, .3, ZERO, ZERO).realign
+    assert sample(s, .7, ZERO, ZERO).realign
 
 
 def make_approaching(collection=False, deferred=False):
@@ -347,6 +348,8 @@ def test_shipped_config_and_launch():
     # Zero publication suppression previously masqueraded as SAFE_STALE.
     assert cm['stop_pub_timeout'] > 24 * 3600
     assert cm['source_timeout'] == c.scan_timeout_sec
+    assert cm['scan']['topic'] == '/tracking_collision/scan'
+    assert cm['base_shift_correction'] is False
     launch = (root / 'launch/navigation.launch.py').read_text()
     assert 'nav2_collision_monitor' in launch and 'nav2_lifecycle_manager' in launch
     assert 'return [collision, lifecycle, tracking]' in launch
