@@ -22,10 +22,10 @@ RAW = Command(0.02, 0.0)
 
 
 def sample(s, t, raw=RAW, safe=None, phase='APPROACH', env=True, reason=''):
-    s.request(raw, phase, t)
+    request_id = s.request(raw, phase, t)
     if safe is not None:
-        s.accept_safe(safe, t + 0.001)
-    return s.evaluate(t + 0.002, env, reason, scan_sequence=round(t * 1000000))
+        s.accept_safe(safe, t + 0.001, request_id, env)
+    return s.evaluate(t + 0.002)
 
 
 def observation(seq, t, bottom=300.0, x=350.0, cls=0):
@@ -33,9 +33,9 @@ def observation(seq, t, bottom=300.0, x=350.0, cls=0):
 
 
 @pytest.mark.parametrize('name,value', [
-    ('scan_timeout_sec', 0), ('raw_timeout_sec', -1), ('safe_timeout_sec', math.nan),
+    ('safe_timeout_sec', 0), ('raw_timeout_sec', -1), ('safe_timeout_sec', math.nan),
     ('hold_timeout_sec', math.inf), ('hold_clear_frames', 0), ('hold_clear_frames', 2.2),
-    ('hold_clear_ratio', 1.2), ('footprint_rear_x', .1), ('hard_stop_margin', 0),
+    ('hold_clear_ratio', 1.2), ('clear_min_interval_sec', 0), ('ready_timeout_sec', 0),
     ('watchdog_period_sec', .5), ('linear_zero_threshold', True),
 ])
 def test_config_rejects_invalid(name, value):
@@ -57,13 +57,13 @@ def test_safe_must_be_uniform_reduction(raw, safe, expected):
 
 def test_no_inputs_do_not_move():
     s = CollisionSafety(CollisionConfig())
-    d = s.evaluate(0, False, 'NO_SCAN')
+    d = s.evaluate(0)
     assert d.command == ZERO and d.pause
 
 
 def test_normal_and_slowing():
     s = CollisionSafety(CollisionConfig())
-    assert sample(s, 0, safe=RAW).state == 'APPROACH'
+    assert sample(s, 0, safe=RAW).state == 'CLEAR'
     d = sample(s, .1, safe=Command(.01, 0))
     assert d.state == 'COLLISION_SLOWING' and d.command.linear_x == .01
 
@@ -92,27 +92,27 @@ def test_identical_raw_callback_does_not_create_wait():
 
 def test_changed_raw_and_old_incompatible_safe_wait():
     s = CollisionSafety(CollisionConfig())
-    sample(s, 0, safe=RAW)
+    old = s.request(RAW, 'APPROACH', 0)
     turn = Command(0, .1)
-    s.request(turn, 'ALIGN', .1)
-    assert not s.accept_safe(RAW, .11)
+    current = s.request(turn, 'ALIGN', .1)
+    assert not s.accept_safe(RAW, .11, old)
     assert s.evaluate(.12).command == ZERO
-    assert s.accept_safe(turn, .13)
+    assert s.accept_safe(turn, .13, current)
     assert s.evaluate(.14).command == turn
 
 
 def test_raw_zero_cannot_be_undone_by_late_safe():
     s = CollisionSafety(CollisionConfig())
-    sample(s, 0, safe=RAW)
+    old = s.request(RAW, 'APPROACH', 0)
     s.request(ZERO, 'APPROACH', .1)
-    assert not s.accept_safe(RAW, .11)
+    assert not s.accept_safe(RAW, .11, old)
     assert s.evaluate(.12).command == ZERO
 
 
 def test_malformed_safe_latches():
     s = CollisionSafety(CollisionConfig())
-    s.request(RAW, 'APPROACH', 0)
-    s.accept_safe(Command(math.inf, 0), .01)
+    request_id = s.request(RAW, 'APPROACH', 0)
+    s.accept_safe(Command(math.inf, 0), .01, request_id)
     assert s.evaluate(.02).failure == 'SAFETY_INVALID_OUTPUT'
 
 
@@ -130,15 +130,17 @@ def test_environment_faults_stop_and_are_bounded(reason):
 def test_watchdog_raw_stale():
     s = CollisionSafety(CollisionConfig())
     sample(s, 0, safe=RAW)
-    assert s.evaluate(.6).state == 'RAW_STALE'
+    assert s.evaluate(.6).failure == 'SAFETY_UNAVAILABLE'
+    assert s.last_fault_reason == 'RAW_STALE'
     assert s.evaluate(.6).command == ZERO
 
 
 def test_watchdog_safe_stale():
     s = CollisionSafety(CollisionConfig())
     sample(s, 0, safe=RAW)
-    s.request(RAW, 'APPROACH', .6)
-    assert s.evaluate(.61).state == 'SAFE_STALE'
+    s.request(RAW, 'APPROACH', .4)
+    assert s.evaluate(.61).failure == 'SAFETY_UNAVAILABLE'
+    assert s.last_fault_reason == 'SAFE_STALE'
 
 
 def test_boundary_jitter_blocked_and_latched():
@@ -206,11 +208,12 @@ def test_realign_ack_discards_old_safe():
     sample(s, 0, safe=ZERO)
     for t in [.1, .2, .3]:
         sample(s, t, safe=RAW)
+    old = s.request(RAW, 'APPROACH', .31)
     assert s.acknowledge_realign(.35)
-    s.request(Command(0, .05), 'REALIGN', .4)
+    current = s.request(Command(0, .05), 'REALIGN', .4)
     assert s.evaluate(.41).command == ZERO
-    assert not s.accept_safe(RAW, .42)
-    assert s.accept_safe(Command(0, .05), .43)
+    assert not s.accept_safe(RAW, .42, old)
+    assert s.accept_safe(Command(0, .05), .43, current)
     assert s.evaluate(.44).command == Command(0, .05)
 
 
@@ -224,9 +227,9 @@ def test_final_any_meaningful_modification_latches(safe):
 
 def test_final_transport_handshake_does_not_start_clock():
     s = CollisionSafety(CollisionConfig())
-    s.request(Command(.03, 0), 'FINAL_APPROACH', 0)
+    request_id = s.request(Command(.03, 0), 'FINAL_APPROACH', 0)
     assert not s.evaluate(.1).failure
-    s.accept_safe(Command(.03, 0), .2)
+    s.accept_safe(Command(.03, 0), .2, request_id)
     assert s.evaluate(.21).command.linear_x == .03
     s.mark_final_started()
     s.request(Command(.03, 0), 'FINAL_APPROACH', .8)
@@ -241,12 +244,12 @@ def test_final_scan_interruption_before_completion():
     assert d.failure == 'FINAL_APPROACH_INTERRUPTED'
 
 
-def test_sensor_recovery_with_zero_raw_requires_fresh_samples_and_dwell():
+def test_monitor_fault_retires_attempt_even_if_later_zero_responses_are_healthy():
     s = CollisionSafety(CollisionConfig())
-    sample(s, 0, ZERO, ZERO, env=False, reason='SCAN_STALE')
-    for t in [.1, .2, .3, .4, .5]:
-        assert not sample(s, t, ZERO, ZERO).realign
-    assert sample(s, .7, ZERO, ZERO).realign
+    assert sample(s, 0, ZERO, ZERO, env=False).failure == 'SAFETY_UNAVAILABLE'
+    for t in [.1, .2, .3, .4, .5, .7]:
+        d = sample(s, t, ZERO, ZERO)
+        assert d.failure == 'SAFETY_UNAVAILABLE' and d.command == ZERO
 
 
 def make_approaching(collection=False, deferred=False):
@@ -335,25 +338,19 @@ def test_shipped_config_and_launch():
     assert t.align_reference_x == 350 and t.lost_abort_frames == 12
     assert t.approach_far_speed == .08 and not t.stop_only_test_mode
     assert t.final_approach_calibrated and t.final_approach_duration_sec == 10
-    assert c.hold_timeout_sec == 3 and c.hard_stop_margin == .01
+    assert c.hold_timeout_sec == 3
     cm = doc['tracking_collision_monitor']['ros__parameters']
     assert cm['cmd_vel_out_topic'] != '/cmd_vel'
     assert cm['HardStop']['max_points'] == 0
-    assert cm['FootprintApproach']['max_points'] >= 1
-    flat = cm['HardStop']['points']
-    actual = sorted(zip(flat[::2], flat[1::2]))
-    expected = sorted(c.rectangle(c.hard_stop_margin))
-    for pair, wanted in zip(actual, expected):
-        assert pair == pytest.approx(wanted)
-    # Zero publication suppression previously masqueraded as SAFE_STALE.
-    assert cm['stop_pub_timeout'] > 24 * 3600
-    assert cm['source_timeout'] == c.scan_timeout_sec
-    assert cm['scan']['topic'] == '/tracking_collision/scan'
+    assert cm['FootprintApproach']['max_points'] == 3
+    assert cm['HardStop']['points'] == [.335, .15, .335, -.15, -.206, -.15, -.206, .15]
+    assert cm['FootprintApproach']['points'] == [.325, -.14, .325, .14, -.196, .14, -.196, -.14]
+    assert cm['source_timeout'] == .4 and cm['scan']['topic'] == '/scan'
     assert cm['base_shift_correction'] is False
     launch = (root / 'launch/navigation.launch.py').read_text()
-    assert 'nav2_collision_monitor' in launch and 'nav2_lifecycle_manager' in launch
+    assert "executable='tracking_collision_monitor'" in launch
+    assert 'nav2_lifecycle_manager' in launch
     assert 'return [collision, lifecycle, tracking]' in launch
     assert 'navigation.launch.py' in (root / 'launch/main.launch.py').read_text()
-    packages = ET.parse(root / 'package.xml').getroot()
-    deps = {el.text for el in packages if el.tag in ('depend', 'exec_depend')}
-    assert {'sensor_msgs', 'tf2_ros_py', 'nav2_collision_monitor', 'nav2_lifecycle_manager'} <= deps
+    deps = {el.text for el in ET.parse(root / 'package.xml').getroot() if el.tag in ('depend', 'exec_depend')}
+    assert {'sensor_msgs', 'nav2_collision_monitor', 'navigation_interface', 'nav2_lifecycle_manager'} <= deps

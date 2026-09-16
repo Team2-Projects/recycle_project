@@ -27,7 +27,7 @@ def test_tracking_disappearance_does_not_block_released_driving(nav_runtime, des
     h.advance(count=20)
     assert h.goal_count() == 1
     assert n._nav_goal_purpose == ('PATROL' if destination == 'PATROL' else 'HOME')
-    assert not n._tracking_health.fresh(h.now)
+    assert '/tracking_collision/health' not in n.subs
     patrol = Handle()
     n._action_client.calls[-1][1].set_result(patrol)
     before = len(n._recycle_tracking_client.calls)
@@ -71,9 +71,7 @@ def test_transport_exception_is_not_wheel_release_evidence(nav_runtime):
     assert n._last_recovery_status == 'RECOVERY_WAIT_TRACKING_RELEASE'
 
 
-@pytest.mark.parametrize('fault', ['scan', 'old_scan', 'future_scan', 'scan_tf',
-                                  'map_tf', 'odom', 'motion', 'nav2', 'servo',
-                                  'scan_sources', 'wheel_writer'])
+@pytest.mark.parametrize('fault', ['scan', 'old_scan', 'future_scan', 'odom', 'motion', 'nav2', 'servo'])
 def test_direct_common_inputs_remain_required_without_tracking(nav_runtime, fault):
     h, n = nav_runtime, nav_runtime.node
     h.health_on = False
@@ -90,7 +88,7 @@ def test_direct_common_inputs_remain_required_without_tracking(nav_runtime, faul
     elif fault == 'motion':
         h.linear = .05
     elif fault == 'nav2':
-        n._nav_state_clients['planner_server'].state = 2
+        n._action_client.ready = False
     elif fault == 'servo':
         n.servo_client.answer = False
     elif fault == 'scan_sources':
@@ -106,22 +104,17 @@ def test_direct_common_inputs_remain_required_without_tracking(nav_runtime, faul
     h.scan_offset = h.linear = 0.
     h.scan_sources = 1
     h.wheel_names = ['auto_nav', 'controller_server', 'recycle']
-    n._recovery_tf.good = n._recovery_tf.scan_good = True
-    n._nav_state_clients['planner_server'].state = 3
+    n._action_client.ready = True
     n.servo_client.answer = True
     h.advance(count=40)
     assert h.goal_count() == 1 and n._nav_goal_purpose == 'HOME'
 
 
-def test_tracker_common_health_cannot_veto_healthy_local_navigation(nav_runtime):
+def test_tracking_unavailable_cannot_veto_released_local_navigation(nav_runtime):
     h, n = nav_runtime, nav_runtime.node
-    h.health_on = False
-    n._health_callback(NS(data=json.dumps(dict(
-        revision='patrol_recovery_v2', session='B', sequence=1,
-        released=True, common_ready=False, collision_ready=False, cleanup_ready=False,
-        common_reason='SCAN_STALE'))))
+    n._recycle_tracking_client.ready = False
     n.command_callback(NS(data='STOP'))
-    h.advance(count=20)
+    h.advance(count=5)
     assert h.goal_count() == 1
 
 
@@ -182,12 +175,37 @@ def test_normal_waypoints_do_not_enter_return_preparation(nav_runtime):
     assert len(n.servo_client.calls) == close_count and n._return_plan is None
 
 
-def test_scan_policy_values_match_existing_tracking_configuration(nav_runtime):
+def test_common_scan_timeout_matches_monitor_without_tracking_dependency(nav_runtime):
     path = Path(__file__).resolve().parents[1] / 'config/recycle_tracking.yaml'
     config = yaml.safe_load(path.read_text())
-    tracking = config['recycle_tracking_node']['ros__parameters']
     autonav = config['auto_nav']['ros__parameters']
-    for name in ('scan_timeout_sec', 'future_stamp_tolerance_sec',
-                 'clear_min_interval_sec', 'scan_restart_frames'):
-        assert autonav['collision_' + name] == tracking['collision_' + name]
-        assert getattr(nav_runtime.node._patrol_scan.config, name) == tracking['collision_' + name]
+    monitor = config['tracking_collision_monitor']['ros__parameters']
+    assert autonav['drive_scan_timeout_sec'] == monitor['source_timeout'] == .4
+    assert nav_runtime.node._drive_scan_timeout == .4
+
+
+@pytest.mark.parametrize('fault', ['nan_ranges', 'inf_ranges', 'angle_nan', 'zero_increment', 'range_bounds', 'duplicate'])
+def test_invalid_common_scan_cannot_keep_departure_alive(nav_runtime, fault):
+    h, n = nav_runtime, nav_runtime.node
+    h.scan_on = False
+    n.command_callback(NS(data='STOP'))
+    first_stamp = n.get_clock().now().nanoseconds
+    for _ in range(15):
+        stamp = first_stamp if fault == 'duplicate' else n.get_clock().now().nanoseconds
+        msg = NS(header=NS(frame_id='base_scan', stamp=NS(sec=stamp // 10**9, nanosec=stamp % 10**9)),
+                 angle_min=-1., angle_max=1., angle_increment=.1,
+                 range_min=.05, range_max=10., ranges=[1.] * 21)
+        if fault == 'nan_ranges': msg.ranges = [float('nan')] * 21
+        elif fault == 'inf_ranges': msg.ranges = [float('inf')] * 21
+        elif fault == 'angle_nan': msg.angle_min = float('nan')
+        elif fault == 'zero_increment': msg.angle_increment = 0.
+        elif fault == 'range_bounds': msg.range_max = 0.
+        n._drive_scan_callback(msg)
+        # A repeated scan may be usable until its original deadline, so keep
+        # physical motion active until expiry to test departure at the deadline.
+        h.linear = .05 if h.now < 2. else 0.
+        h.advance()
+    assert h.goal_count() == 0
+    h.scan_on = True
+    h.advance(count=5)
+    assert h.goal_count() == 1

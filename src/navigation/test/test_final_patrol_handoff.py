@@ -2,7 +2,7 @@
 
 No physical motor, DDS, Nav2 planner or collision geometry is emulated here.
 The existing adapter harness runs TrackingController/CollisionSafety themselves;
-its results and health messages are passed to the actual AutoNav callbacks.
+its Action results are passed to the actual AutoNav callbacks.
 """
 from concurrent.futures import Future
 from dataclasses import replace
@@ -83,39 +83,40 @@ def test_do_not_close_or_navigate_until_tracking_released_and_stopped(nav_runtim
     n = h.node
     count = len(n.servo_client.calls)
     if block == 'ownership':
-        h.released = False
+        n._tracking_release_confirmed = False
     elif block == 'motion':
         h.linear = .03
     else:
         h.odom_on = False
     n.recycle_tracking_result_callback(completed())
+    if block == 'ownership':
+        n._tracking_release_confirmed = False
     h.advance(count=20)
     assert len(n.servo_client.calls) == count and h.goal_count() == 0
-    h.released, h.linear, h.odom_on = True, 0., True
+    n._tracking_release_confirmed, h.linear, h.odom_on = True, 0., True
     h.advance(count=15)
     assert len(n.servo_client.calls) > count and h.goal_count() == 1
 
 
-@pytest.mark.parametrize('block', ['scan', 'tf', 'nav2', 'servo', 'ownership'])
+@pytest.mark.parametrize('block', ['scan', 'nav2', 'servo', 'ownership'])
 def test_final_recovery_does_not_require_manual_reset_after_real_inputs_recover(nav_runtime, block):
     h = nav_runtime
     n = h.node
     if block == 'scan':
         h.common = False
-    elif block == 'tf':
-        n._recovery_tf.good = False
     elif block == 'nav2':
-        n._nav_state_clients['controller_server'].state = 2
+        n._action_client.ready = False
     elif block == 'servo':
         n.servo_client.success = False
     else:
-        h.released = False
+        n._tracking_release_confirmed = False
     n.recycle_tracking_result_callback(completed())
+    if block == 'ownership':
+        n._tracking_release_confirmed = False
     h.advance(count=25)
     assert h.goal_count() == 0 and n._return_plan is not None
-    h.common = h.released = True
-    n._recovery_tf.good = True
-    n._nav_state_clients['controller_server'].state = 3
+    h.common = n._tracking_release_confirmed = True
+    n._action_client.ready = True
     n.servo_client.success = True
     h.advance(count=35)
     assert h.goal_count() == 1
@@ -396,9 +397,9 @@ def test_cleanup_period_and_late_safe_never_change_committed_outcome(runtime, te
     for _ in range(5):
         h.advance(.1)
         n._safe_callback(n._twist(Command(.03)))
-        n._publish_health()
+        n._cleanup_tick()
     assert len(n.cmd_vel_pub.messages) == count
-    assert json.loads(n._health_pub.messages[-1].data)['released']
+    assert not n._owns_cmd_vel
 
 
 def test_cancel_during_cleanup_wins_over_completed_final_motion(runtime):
@@ -465,24 +466,15 @@ def test_actual_adapter_result_health_and_autonav_handoff(nav_runtime, runtime, 
     f = Future(); f.set_result(NS(status=6, result=result))
     n.recycle_tracking_result_callback(f)
     assert n.collected_count == 0
-    a.health_on = False  # no invented ready report: use actual adapter output
-    a.scan_on = False
     motor_count = len(tracking.cmd_vel_pub.messages)
-    for i in range(60):
-        t.now = a.now
-        if i >= 20:
-            t.scan_on = t.monitor_on = True
-        t.environment()
-        if t.scan_on:
-            n._patrol_scan_callback(tracking._scan_pub.messages[-1])
-        tracking._idle_health_probe()
-        if t.monitor_on:
-            tracking._safe_callback(Twist())
-        tracking._publish_health()
-        n._health_callback(tracking._health_pub.messages[-1])
-        a.advance(.1)
-        if i == 19:
-            assert a.goal_count() == (0 if fault == 'scan' else 1)
+    a.scan_on = fault != 'scan'
+    a.advance(count=10)
+    assert a.goal_count() == (0 if fault == 'scan' else 1)
+    a.scan_on = True
+    a.advance(count=5)
+    for _ in range(5):
+        t.advance(.1)
+        tracking._cleanup_tick()
     assert a.goal_count() == 1 and n._acquisition_lock.locked
     assert n.collected_count == 0 and not n._recycle_tracking_client.calls
     assert len(tracking.cmd_vel_pub.messages) == motor_count

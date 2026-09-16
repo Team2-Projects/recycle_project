@@ -17,7 +17,7 @@ def _launch_nodes(context):
         name='recycle_tracking_node', parameters=[params, clock_params], output='screen',
     )
     collision = Node(
-        package='nav2_collision_monitor', executable='collision_monitor',
+        package='navigation', executable='tracking_collision_monitor',
         name='tracking_collision_monitor', parameters=[params, clock_params], output='screen',
     )
     lifecycle = Node(

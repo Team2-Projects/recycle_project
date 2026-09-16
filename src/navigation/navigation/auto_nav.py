@@ -10,17 +10,12 @@ from action_msgs.msg import GoalStatus
 from std_msgs.msg import String
 from rcl_interfaces.msg import ParameterDescriptor
 from std_srvs.srv import Trigger
-from lifecycle_msgs.srv import GetState
 from rclpy.clock import Clock, ClockType
-from rclpy.time import Time
-from tf2_ros import Buffer, TransformListener
-from dataclasses import fields, replace
-from navigation.collision_safety import CollisionConfig, ScanInput
+from dataclasses import fields
 from navigation.patrol_recovery import (
-    AUTO_PATROL_REASONS, AcquisitionLock, HealthFeed, OdomEvidence,
-    PatrolRecoveryConfig, ReturnPlan, StableReadiness,
+    AUTO_PATROL_REASONS, AcquisitionLock, OdomEvidence,
+    PatrolRecoveryConfig, ReturnPlan,
 )
-from navigation.tracking_control import Observation, RecoveryCounter
 import json
 import time
 import math
@@ -51,21 +46,6 @@ class AutoNav(Node):
         self._tracking_retry_after = 0.0
         self._tracking_safety_hold = False
         self._tracking_hold_reason = ''
-        self._sensor_observation = None
-        self._sensor_sequence = 0
-        recovery_params = {
-            'sensor_recovery_frames': 3,
-            'sensor_recovery_min_interval_sec': 0.05,
-            'sensor_recovery_max_interval_sec': 1.20,
-        }
-        for name, value in recovery_params.items():
-            self.declare_parameter(name, value, ParameterDescriptor(read_only=True))
-        self._sensor_recovery = RecoveryCounter(
-            int(self.get_parameter('sensor_recovery_frames').value),
-            float(self.get_parameter('sensor_recovery_min_interval_sec').value),
-            float(self.get_parameter('sensor_recovery_max_interval_sec').value),
-        )
-
         self.object_found_pub = self.create_publisher(String, "/object_found", 10)
         self.robot_status_pub = self.create_publisher(String, "/robot_status", 10)
         self.robot_task_pub = self.create_publisher(String, "/robot_task", 10)
@@ -163,31 +143,25 @@ class AutoNav(Node):
         self.get_logger().info('AutoNav Ready with Multi-collection, Motor, and Web UI integration.')
 
     def _init_patrol_recovery(self):
+        defaults = PatrolRecoveryConfig()
         values = {}
-        for field in fields(PatrolRecoveryConfig()):
+        for field in fields(defaults):
             name = 'patrol_recovery_' + field.name
-            self.declare_parameter(name, getattr(PatrolRecoveryConfig(), field.name),
+            self.declare_parameter(name, getattr(defaults, field.name),
                                    ParameterDescriptor(read_only=True))
             values[field.name] = self.get_parameter(name).value
         self._recovery_cfg = PatrolRecoveryConfig(**values)
-        self._tracking_health = HealthFeed(self._recovery_cfg)
-        scan_defaults = CollisionConfig()
-        scan_values = {}
-        for name in ('scan_timeout_sec', 'future_stamp_tolerance_sec',
-                     'clear_min_interval_sec', 'scan_restart_frames'):
-            parameter = 'collision_' + name
-            self.declare_parameter(parameter, getattr(scan_defaults, name),
-                                   ParameterDescriptor(read_only=True))
-            scan_values[name] = self.get_parameter(parameter).value
-        self._patrol_scan = ScanInput(replace(scan_defaults, **scan_values))
-        self._patrol_topology_at = -math.inf
-        self._patrol_topology_reason = ''
+        # Nav2's configured obstacle layers have no expected_update_rate.
+        # Keep a small COMMON scan receipt check, independent of Tracking.
+        self.declare_parameter('drive_scan_timeout_sec', .40, ParameterDescriptor(read_only=True))
+        self._drive_scan_timeout = float(self.get_parameter('drive_scan_timeout_sec').value)
+        if not math.isfinite(self._drive_scan_timeout) or self._drive_scan_timeout <= 0:
+            raise ValueError('drive_scan_timeout_sec must be finite and positive')
+        self._drive_scan = None
         self._odom = OdomEvidence(self._recovery_cfg)
-        self._resume_ready = StableReadiness(self._recovery_cfg)
         self._acquisition_lock = AcquisitionLock(self._recovery_cfg.release_distance_m,
                                                   self._recovery_cfg.odom_timeout_sec)
         self._return_plan = None
-        self._return_generation = 0
         # Stop/recovery invalidates old post-collection timer callbacks. Each
         # tracking request/result also has a local generation, not just a bool.
         self._collection_generation = 0
@@ -195,7 +169,7 @@ class AutoNav(Node):
         self._tracking_response_generation = None
         self._tracking_result_generation = None
         # Our adapter releases wheel ownership BEFORE returning a terminal
-        # result. Keep that evidence even if its later idle health disappears.
+        # result. No independent Tracking health subscription is needed.
         self._tracking_release_confirmed = True
         self._nav_request_generation = 0
         self._nav_response_generation = None
@@ -214,32 +188,16 @@ class AutoNav(Node):
         self._close_started_at = None
         self._close_attempts = 0
         self._close_retry_after = 0.0
-        self._tracking_mode_clear = True
-        self._cleanup_after = None
         self._last_recovery_status = None
         self._recovery_status_since = time.monotonic()
         self._recovery_status_at = -math.inf
         self._recovery_status_sequence = 0
         self._recovery_pub = self.create_publisher(String, '/auto_nav/recovery_status', 10)
         self._recovery_details_pub = self.create_publisher(String, '/auto_nav/recovery_details', 10)
-        self.create_subscription(String, '/tracking_collision/health', self._health_callback, 1)
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT,
                          durability=DurabilityPolicy.VOLATILE)
         self.create_subscription(Odometry, '/odom', self._odom_callback, qos)
-        self.create_subscription(LaserScan, '/scan', self._patrol_scan_callback, qos)
-        self._recovery_tf = Buffer()
-        self._recovery_tf_listener = TransformListener(self._recovery_tf, self)
-        self.declare_parameter('patrol_recovery_nav2_nodes',
-                               ['controller_server', 'planner_server', 'bt_navigator'],
-                               ParameterDescriptor(read_only=True))
-        names = self.get_parameter('patrol_recovery_nav2_nodes').value
-        if not names or not all(isinstance(n, str) and n.strip('/') for n in names):
-            raise ValueError('patrol_recovery_nav2_nodes must contain lifecycle node names')
-        self._nav_state_clients = {name: self.create_client(GetState, '/' + name.strip('/') + '/get_state')
-                                   for name in names}
-        self._nav_states = {}
-        self._nav_state_futures = {}
-        self._nav_state_requested_at = {}
+        self.create_subscription(LaserScan, '/scan', self._drive_scan_callback, qos)
         self._recovery_clock = Clock(clock_type=ClockType.STEADY_TIME)
         self.create_timer(self._recovery_cfg.period_sec, self._auto_return_tick,
                           clock=self._recovery_clock)
@@ -271,41 +229,31 @@ class AutoNav(Node):
         self._recovery_pub.publish(String(data=state))
         self._recovery_details_pub.publish(String(data=json.dumps(details)))
 
-    def _patrol_scan_callback(self, msg):
-        self._patrol_scan.receive(msg, time.monotonic(), self.get_clock().now().nanoseconds)
+    def _drive_scan_callback(self, msg):
+        now, ros_ns = time.monotonic(), self.get_clock().now().nanoseconds
+        stamp = int(msg.header.stamp.sec) * 10**9 + int(msg.header.stamp.nanosec)
+        if (not msg.header.frame_id or not 0 <= msg.header.stamp.nanosec < 10**9
+                or stamp <= 0 or len(msg.ranges) < 2
+                or not all(math.isfinite(v) for v in (msg.angle_min, msg.angle_max,
+                            msg.angle_increment, msg.range_min, msg.range_max))
+                or msg.angle_increment <= 0 or msg.range_max <= msg.range_min
+                or not any(math.isfinite(v) and max(msg.range_min, .001) <= v <= msg.range_max
+                           for v in msg.ranges)
+                or not -self._recovery_cfg.future_stamp_tolerance_sec
+                <= (ros_ns - stamp) * 1e-9 <= self._drive_scan_timeout):
+            return
+        if self._drive_scan is not None:
+            previous, received = self._drive_scan
+            if stamp == previous or (stamp < previous and now - received <= self._drive_scan_timeout):
+                return
+        self._drive_scan = stamp, now
 
-    def _tracking_motion_released(self, now):
-        feed = self._tracking_health
-        if feed.fresh(now) and not feed.row['released']:
-            return False
-        return self._tracking_release_confirmed
-
-    def _patrol_common_ready(self, now):
-        ready, reason = self._patrol_scan.health(now, self.get_clock().now().nanoseconds)
-        if not ready:
-            return False, reason
-        try:
-            if not self._recovery_tf.can_transform('base_footprint', self._patrol_scan.frame, Time()):
-                return False, 'SCAN_TF_UNAVAILABLE'
-            if now - self._patrol_topology_at > 0.25:
-                self._patrol_topology_at = now
-                self._patrol_topology_reason = 'SCAN_TOPIC_OWNERSHIP'
-                if len(self.get_publishers_info_by_topic('/scan')) == 1:
-                    self._patrol_topology_reason = 'CMD_VEL_OWNERSHIP'
-                    allowed = {'auto_nav', 'recycle_tracking_node', 'recycle', 'controller_server',
-                               'velocity_smoother', 'behavior_server', 'recoveries_server'}
-                    names = [p.node_name for p in self.get_publishers_info_by_topic('/cmd_vel')]
-                    if names.count('auto_nav') == 1 and all(name in allowed for name in names):
-                        self._patrol_topology_reason = ''
-        except Exception:
-            return False, 'NAV_INPUT_UNAVAILABLE'
-        return not self._patrol_topology_reason, self._patrol_topology_reason
-
-    def _health_callback(self, msg):
-        try:
-            self._tracking_health.receive(json.loads(msg.data), time.monotonic())
-        except (ValueError, TypeError, AttributeError):
-            pass  # One bad diagnostic message never refreshes last-good health.
+    def _drive_scan_fresh(self, now):
+        return (self._drive_scan is not None
+                and 0 <= now - self._drive_scan[1] <= self._drive_scan_timeout
+                and -self._recovery_cfg.future_stamp_tolerance_sec
+                <= (self.get_clock().now().nanoseconds - self._drive_scan[0]) * 1e-9
+                <= self._drive_scan_timeout)
 
     def _odom_callback(self, msg):
         try:
@@ -349,9 +297,7 @@ class AutoNav(Node):
                 and self.tracking_handle is None and self.recycle_handle is None)
 
     def _cancel_auto_return(self, state):
-        self._return_generation += 1
         self._return_plan = None
-        self._resume_ready.reset()
         if self._close_future is not None and not self._close_future.done():
             # Cancels the local waiter only, NOT server-side servo movement.
             self._close_future.cancel()
@@ -362,8 +308,7 @@ class AutoNav(Node):
         self._cancel_auto_return('RECOVERY_QUEUED')
         x, y = ((self.home_x, self.home_y) if destination == 'HOME'
                 else (self.resume_x, self.resume_y))
-        self._return_plan = ReturnPlan(self._return_generation, reason,
-                                       float(x), float(y), time.monotonic(),
+        self._return_plan = ReturnPlan(reason, float(x), float(y), time.monotonic(),
                                        manual=manual, destination=destination)
         if destination == 'PATROL':
             self._acquisition_lock.engage()
@@ -371,41 +316,10 @@ class AutoNav(Node):
         self.object_found = True
         self._close_attempts = 0
         self._close_retry_after = 0.0
-        self._nav_states.clear()  # require current Nav2 state, not pre-fault state
         label = ('보완접근 중단·이번 수거 미확정·순찰 복귀 준비'
                  if reason == 'FINAL_APPROACH_INTERRUPTED' else '수거 대상 포기·순찰 복귀 준비')
         self.publish_robot_task('HOME_PREPARE' if destination == 'HOME' else 'TRACKING_RECOVERY',
                                 'HOME 복귀 준비' if destination == 'HOME' else label, reason, 'Task')
-
-    def _poll_nav_states(self, now):
-        for name, client in self._nav_state_clients.items():
-            item = self._nav_state_futures.get(name)
-            if item is not None:
-                future, started = item
-                if future.done():
-                    try:
-                        response = future.result()
-                        good = response is not None and response.current_state.id == 3
-                    except Exception:
-                        good = False
-                    self._nav_states[name] = (good, now)
-                    self._nav_state_futures.pop(name, None)
-                elif now - started > self._recovery_cfg.service_timeout_sec:
-                    future.cancel()
-                    self._nav_state_futures.pop(name, None)
-                    self._nav_states[name] = (False, now)
-            if name in self._nav_state_futures:
-                continue
-            if now - self._nav_state_requested_at.get(name, -math.inf) < self._recovery_cfg.nav_state_poll_sec:
-                continue
-            self._nav_state_requested_at[name] = now
-            if not client.service_is_ready():
-                self._nav_states[name] = (False, now)
-                continue
-            try:
-                self._nav_state_futures[name] = (client.call_async(GetState.Request()), now)
-            except Exception:
-                self._nav_states[name] = (False, now)
 
     def _poll_recovery_close(self, now):
         plan = self._return_plan
@@ -448,56 +362,8 @@ class AutoNav(Node):
             self.get_logger().warn(f'복귀 서보 서비스 요청 실패: {exc}')
         return False
 
-    def _poll_tracking_cleanup(self, now):
-        # Tracking owns ALL ON/OFF requests, including delayed cleanup. AutoNav
-        # only observes settlement; a second client cannot order those requests.
-        feed = self._tracking_health
-        token = (feed.session, feed.seq)
-        if (not self._tracking_mode_clear and token != self._cleanup_after
-                and feed.cleanup_ready(now)):
-            self._tracking_mode_clear = True
-            self._cleanup_after = None
-
-    def _record_tracking_cleanup(self, message):
-        if 'CLEANUP_UNCONFIRMED' in message or '추적 모드 해제 확인 실패' in message:
-            self._tracking_mode_clear = False
-            self._cleanup_after = (self._tracking_health.session, self._tracking_health.seq)
-
-    def _collection_cleanup_ready(self, now):
-        self._poll_tracking_cleanup(now)
-        return self._tracking_mode_clear and self._tracking_health.cleanup_ready(now)
-
-    def _patrol_ready(self, now):
-        if not self._tracking_motion_released(now):
-            return False, 'RECOVERY_WAIT_TRACKING_RELEASE'
-        common_ready, common_reason = self._patrol_common_ready(now)
-        if not common_ready:
-            return False, 'RECOVERY_WAIT_' + common_reason
-        ros_ns = self.get_clock().now().nanoseconds
-        if not self._odom.fresh(now, ros_ns):
-            return False, 'RECOVERY_WAIT_ODOM'
-        if not self._odom.stopped(now, ros_ns):
-            return False, 'RECOVERY_WAIT_STOP'
-        try:
-            # Latest map transform may legitimately be old while AMCL is at
-            # rest. Do not impose a 0.4s scan deadline on AMCL updates.
-            if not self._recovery_tf.can_transform('map', 'base_footprint', Time()):
-                return False, 'RECOVERY_WAIT_MAP_TF'
-            if not self._recovery_tf.can_transform('odom', 'base_footprint', Time()):
-                return False, 'RECOVERY_WAIT_ODOM_TF'
-        except Exception:
-            return False, 'RECOVERY_WAIT_NAV_TF'
-        if not self._action_client.server_is_ready():
-            return False, 'RECOVERY_WAIT_NAV2_SERVER'
-        for name in self._nav_state_clients:
-            good, at = self._nav_states.get(name, (False, -math.inf))
-            if not good or not 0 <= now - at <= self._recovery_cfg.nav_state_timeout_sec:
-                return False, 'RECOVERY_WAIT_NAV2:' + name
-        return True, ''
-
     def _auto_return_tick(self):
         now = time.monotonic()
-        self._poll_tracking_cleanup(now)
         plan = self._return_plan
         if plan is None:
             self._set_recovery_status(self._last_recovery_status or 'IDLE')
@@ -511,37 +377,30 @@ class AutoNav(Node):
                 return
         if (self._any_goal_pending() or self.current_handle is not None
                 or self.tracking_handle is not None or self.recycle_handle is not None):
-            self._resume_ready.reset()
             self._set_recovery_status('RECOVERY_WAIT_ACTION_FINISH')
             return  # Never fight an active Nav2/Tracking goal with zero heartbeats.
         self.stop_pending = False
         self.cmd_vel_pub.publish(Twist())
-        self._poll_nav_states(now)
         # A terminal result is not proof of physical stopping. Do not close
         # while tracking still owns motion or odometry still reports motion.
-        if not self._tracking_motion_released(now):
-            self._resume_ready.reset()
+        if not self._tracking_release_confirmed:
             self._set_recovery_status('RECOVERY_WAIT_TRACKING_RELEASE')
             return
         ros_ns = self.get_clock().now().nanoseconds
         if not self._odom.stopped(now, ros_ns):
-            self._resume_ready.reset()
             self._set_recovery_status('RECOVERY_WAIT_STOP' if self._odom.fresh(now, ros_ns)
                                       else 'RECOVERY_WAIT_ODOM')
             return
-        servo_ok = self._poll_recovery_close(now)
-        ready, reason = self._patrol_ready(now)
-        if not ready or not servo_ok:
-            self._resume_ready.reset()
-            self._set_recovery_status(reason if not ready else 'RECOVERY_WAIT_SERVO')
+        if not self._poll_recovery_close(now):
+            self._set_recovery_status('RECOVERY_WAIT_SERVO')
             return
-        token = (self._patrol_scan.sequence, self._odom.sequence)
-        previous = self._resume_ready.last_token
-        if previous is not None and (token[0] == previous[0] or token[1] == previous[1]):
-            # Count distinct original scan AND stopped odom observations.
-            token = previous
-        if not self._resume_ready.push(now, token, True):
-            self._set_recovery_status('RECOVERY_CONFIRMING')
+        if not self._drive_scan_fresh(now):
+            self._set_recovery_status('RECOVERY_WAIT_SCAN_STALE')
+            return
+        # Nav2 owns localization, costmaps and controller lifecycle. Readiness
+        # is its Action server contract, not a second lifecycle health FSM.
+        if not self._action_client.server_is_ready():
+            self._set_recovery_status('RECOVERY_WAIT_NAV2_SERVER')
             return
         # Single-threaded AutoNav callbacks: no asynchronous wait between this
         # final check and send_goal(). Pending-goal flag is set before sending.
@@ -553,8 +412,6 @@ class AutoNav(Node):
             return
         self._tracking_safety_hold = False
         self._tracking_hold_reason = ''
-        self._sensor_recovery.reset()
-        self._sensor_observation = None
         self.object_found = False
         if self.collected_count == 0:
             self.object_id = None
@@ -761,34 +618,8 @@ class AutoNav(Node):
         self.publish_robot_state("state", "Running")
         self.publish_robot_task("PATROL_START", "순찰 시작", "", "Task")
 
-    def _record_sensor_recovery(self, msg):
-        """Runs before object_found/id checks, even when safety hold is latched."""
-        if self._tracking_hold_reason not in ('SENSOR_STALE', 'VISION_NOT_READY'):
-            return
-        now = time.monotonic()
-        self._sensor_sequence += 1
-        try:
-            x, y, width, height = (float(v) for v in msg.coord)
-            self._sensor_observation = Observation(
-                self._sensor_sequence, now, int(msg.id), float(msg.confidence),
-                x, y, width, height,
-            )
-        except (TypeError, ValueError, AttributeError, OverflowError):
-            self._sensor_recovery.reset()
-            self._sensor_observation = None
-            return
-        was_ready = self._sensor_recovery.healthy(now)
-        ready = self._sensor_recovery.push(now)
-        if ready and not was_ready:
-            if self._return_plan is not None:
-                self.get_logger().info('비전 수신 정상화; 현재 대상 포기 후 순찰 자동 복귀 조건 확인 중')
-            else:
-                self.get_logger().info(
-                    '비전 수신 정상화. 수동 재시도는 /auto_nav/resume_sensor_hold; '
-                    '대상 포기는 /auto_nav/reset_tracking_hold 사용.')
-
     def resume_sensor_hold_callback(self, request, response):
-        """Operator-confirmed retry of the SAME target after vision recovery."""
+        """Explicit retry; Tracking alone verifies fresh vision, Monitor and OFF completion."""
         response.success = False
         retryable_reasons = ('SENSOR_STALE', 'VISION_NOT_READY')
         if not self._tracking_safety_hold or self._tracking_hold_reason not in retryable_reasons:
@@ -797,30 +628,17 @@ class AutoNav(Node):
                 '기타 홀드는 /auto_nav/reset_tracking_hold 사용'
             )
             return response
-        now = time.monotonic()
-        if not self._collection_cleanup_ready(now):
-            response.message = '이전 추적 ON/OFF 정리 응답 대기 중; 새 추적은 정리 완료 후 가능'
-            return response
-        if not self._sensor_recovery.healthy(now):
-            response.message = '정상 간격의 새 결과 연속 수신이 아직 확인되지 않음'
-            return response
         if (self.cancel_reason in ('STOP', 'BATTERY_LOW') or self.is_returning_home
                 or self.stop_pending or self._any_goal_pending()
                 or not self.is_running or self.tracking_handle is not None
                 or self.current_handle is not None or self.recycle_handle is not None):
             response.message = '다른 작업/취소/HOME 복귀 상태이므로 재개하지 않음'
             return response
-        obs = self._sensor_observation
-        if (self.object_id is None or obs is None
-                or not obs.usable(self.object_id, True)
-                or not 0 <= now - obs.received_at <= self._sensor_recovery.max_interval):
-            response.message = '수신은 복구됐으나 기존 대상의 유효한 최신 좌표가 없음'
+        if self.object_id is None:
+            response.message = '재시도할 대상 없음'
             return response
         if not self._recycle_tracking_client.server_is_ready():
             response.message = '추적 Action 서버가 준비되지 않음'
-            return response
-        if not self._tracking_health.collection_ready(now):
-            response.message = '동일 대상 재시도 전 Collision 안전 입력 복구가 필요함'
             return response
         self._cancel_auto_return('MANUAL_RETRY')
         self._acquisition_lock = AcquisitionLock(self._recovery_cfg.release_distance_m,
@@ -828,7 +646,6 @@ class AutoNav(Node):
         self.cmd_vel_pub.publish(Twist())
         # 실패 시 닫았으므로 재시도 전에 다시 연다.
         self.trigger_servo_movement(-90, 90, purpose='열기/추적재시도', verify=True)
-        self.target_x, self.target_y, self.target_h = obs.x, obs.y, obs.height
         self.cancel_reason = 'OBJECT'
         self._tracking_safety_hold = False
         self._tracking_hold_reason = ''
@@ -861,7 +678,7 @@ class AutoNav(Node):
         if self._return_plan is None:
             self._queue_auto_return(self._tracking_hold_reason or 'MANUAL_RESET', manual=True)
         response.success = True
-        response.message = ('대상 포기 요청 등록; 정상 LiDAR/TF/Nav2와 서보 닫힘을 확인한 뒤 '
+        response.message = ('대상 포기 요청 등록; 공통 scan/정지 odom과 서보 닫힘을 확인한 뒤 '
                             '자동 순찰 재개. /auto_nav/recovery_status 확인')
         return response
 
@@ -870,14 +687,11 @@ class AutoNav(Node):
         self._cancel_collection_timers()
         self.cmd_vel_pub.publish(Twist())
         self.get_logger().warn(f'Tracking 종료: {message}')
-        self._record_tracking_cleanup(message)
         if self.cancel_reason in ('STOP', 'BATTERY_LOW'):
             self.return_home_by_stop()
             return
         code = message.split(':', 1)[0].strip()
         self._tracking_hold_reason = code
-        self._sensor_recovery.reset()
-        self._sensor_observation = None
         self._tracking_retry_after = time.monotonic() + self.tracking_failure_cooldown_sec
         self.publish_robot_task('OBJECT_PICKUP_FAIL', '추적 종료', message, 'Warning')
         self._tracking_safety_hold = True
@@ -894,8 +708,6 @@ class AutoNav(Node):
             self.publish_robot_task('TRACKING_HOLD', '정지 확인 필요', message, 'Warning')
 
     def object_callback(self, msg):
-        # 홀드가 걸려 있어도 비전 수신 회복 여부는 계속 관찰한다.
-        self._record_sensor_recovery(msg)
         if msg.id == -1:
             return
 
@@ -925,8 +737,6 @@ class AutoNav(Node):
         # 정지 확인이 필요한 홀드 상태이거나 실패 직후 쿨다운 중이면 재시작하지 않는다.
         if (self._tracking_safety_hold or self._acquisition_lock.locked
                 or self._return_plan is not None or self._any_goal_pending()
-                or not self._collection_cleanup_ready(time.monotonic())
-                or not self._tracking_health.collection_ready(time.monotonic())
                 or time.monotonic() < self._tracking_retry_after
                 or self.cancel_reason in ('STOP', 'BATTERY_LOW')
                 or self.is_returning_home or not self.is_running
@@ -976,9 +786,6 @@ class AutoNav(Node):
             return
         if self.is_returning_home or self.cancel_reason in ('STOP', 'BATTERY_LOW'):
             self.return_home_by_stop()
-            return
-        if not self._collection_cleanup_ready(time.monotonic()):
-            self._handle_tracking_failure('VISION_NOT_READY: 이전 추적 정리 응답 대기')
             return
         if not self._recycle_tracking_client.server_is_ready():
             self._handle_tracking_failure('TRACKING_GOAL_REJECTED: 추적 Action 서버 미준비; 대상 포기')
@@ -1057,7 +864,6 @@ class AutoNav(Node):
 
         if status in (GoalStatus.STATUS_SUCCEEDED, GoalStatus.STATUS_ABORTED, GoalStatus.STATUS_CANCELED):
             self._tracking_release_confirmed = True
-        self._record_tracking_cleanup(result.message)
         if self.cancel_reason in ('STOP', 'BATTERY_LOW'):
             self.cmd_vel_pub.publish(Twist())
             self.return_home_by_stop()

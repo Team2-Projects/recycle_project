@@ -7,17 +7,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from navigation.patrol_recovery import (  # noqa: E402
-    AUTO_PATROL_REASONS, AcquisitionLock, HealthFeed, OdomEvidence,
-    PatrolRecoveryConfig, StableReadiness,
+    AUTO_PATROL_REASONS, AcquisitionLock, OdomEvidence,
+    PatrolRecoveryConfig,
 )
 
 CFG = PatrolRecoveryConfig()
 BASE = 1700000000 * 10**9
-
-
-def row(seq=1, session='A', **kw):
-    return dict(revision='patrol_recovery_v2', session=session, sequence=seq,
-                released=True, common_ready=True, collision_ready=True, **kw)
 
 
 def test_only_documented_recoverable_reasons():
@@ -31,92 +26,12 @@ def test_only_documented_recoverable_reasons():
     })
 
 
-@pytest.mark.parametrize('kw', [dict(enabled=1), dict(samples=1), dict(samples=3.5),
-                              dict(period_sec=1.), dict(health_timeout_sec=0),
-                              dict(release_distance_m=-.1), dict(stable_sec=float('nan'))])
+@pytest.mark.parametrize('kw', [dict(enabled=1), dict(odom_timeout_sec=0), dict(service_timeout_sec=-1),
+                              dict(period_sec=1.), dict(service_retry_sec=0),
+                              dict(release_distance_m=-.1), dict(stopped_linear_speed=float('nan'))])
 def test_invalid_config_rejected(kw):
     with pytest.raises(ValueError):
         replace(CFG, **kw)
-
-
-def test_dwell_requires_distinct_packets_and_elapsed_time():
-    r = StableReadiness(CFG)
-    assert not r.push(0, 1)
-    assert not r.push(.2, 1)
-    assert not r.push(.4, 1)
-    assert not r.push(.6, 1)
-    assert not r.push(.6, 2)
-    assert r.push(.7, 3)
-
-
-def test_failed_readiness_restarts_dwell_not_entire_mission():
-    r = StableReadiness(CFG)
-    for t, seq in [(0, 1), (.2, 2), (.4, 3)]:
-        assert not r.push(t, seq)
-    assert not r.push(.6, 4, False)
-    assert not r.push(.7, 5)
-    assert not r.push(.9, 6)
-    assert r.push(1.3, 7)
-
-
-def test_readiness_gap_must_reconfirm():
-    r = StableReadiness(CFG)
-    r.push(0., 1)
-    r.push(.3, 2)
-    assert r.push(.6, 3)
-    assert not r.push(2.0, 4)
-
-
-def test_collection_health_needs_new_session_handshake():
-    f = HealthFeed(CFG)
-    for t, seq in [(0., 1), (.3, 2), (.6, 3)]:
-        assert f.receive(row(seq), t)
-    assert f.collection_ready(.6)
-    assert f.receive(row(1, 'B'), .7)
-    assert not f.collection_ready(.7)
-
-
-def test_duplicate_health_never_renews_timeout():
-    f = HealthFeed(CFG)
-    assert f.receive(row(), .1)
-    for t in [.2, .4, 1., 2.]:
-        assert not f.receive(row(), t)
-    assert not f.fresh(2.)
-
-
-def test_ready_health_at_same_timestamp_is_not_enough_to_drive():
-    f = HealthFeed(CFG)
-    for seq in [1, 2, 3]:
-        f.receive(row(seq), .1)
-    assert not f.collection_ready(.1)
-    assert not f.collection_ready(2.)
-
-
-def test_collision_fault_does_not_invalidate_common_scan_for_patrol():
-    f = HealthFeed(CFG)
-    r = row()
-    r['collision_ready'] = False
-    f.receive(r, .1)
-    assert f.common_ready(.2)
-    assert not f.collection_ready(.2)
-
-
-def test_active_tracking_cannot_claim_handoff_complete():
-    f = HealthFeed(CFG)
-    r = row()
-    r['released'] = False
-    f.receive(r, .1)
-    assert not f.common_ready(.2)
-
-
-@pytest.mark.parametrize('kw', [dict(sequence=True), dict(sequence=0), dict(session=''),
-                              dict(common_ready='true'), dict(revision='receipt_v1')])
-def test_malformed_health_not_authority(kw):
-    f = HealthFeed(CFG)
-    r = row()
-    r.update(kw)
-    assert not f.receive(r, .1)
-    assert not f.common_ready(.1)
 
 
 def put_odom(o, t, *, x=0., y=0., linear=0., angular=0., offset=0., frame='odom'):

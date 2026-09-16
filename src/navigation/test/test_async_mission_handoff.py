@@ -55,10 +55,14 @@ def test_tracking_stop_waits_then_sends_home_once(nav_runtime, command, block):
         n._action_client.ready = False
     # Neither monitor-only faults nor unfinished perception cleanup gate HOME.
     h.collision = h.cleanup = False
-    handle.result.set_result(outcome(message='FINAL_APPROACH_INTERRUPTED: test; CLEANUP_UNCONFIRMED: timeout'))
+    terminal = outcome(message='FINAL_APPROACH_INTERRUPTED: test; CLEANUP_UNCONFIRMED: timeout')
+    if block != 'release':
+        handle.result.set_result(terminal)
     h.advance(count=6)
     assert h.goal_count() == 0
-    h.released, h.common, h.odom_on, h.linear = True, True, True, 0.
+    h.common, h.odom_on, h.linear = True, True, 0.
+    if block == 'release':
+        handle.result.set_result(terminal)
     n._action_client.ready = True
     if block == 'servo':
         pending_close = n._close_future
@@ -66,7 +70,7 @@ def test_tracking_stop_waits_then_sends_home_once(nav_runtime, command, block):
         pending_close.set_result(NS(success=True))
     h.advance(count=8)
     assert_home(h)
-    assert not n._tracking_mode_clear
+    assert 'set_tracking_mode' not in n.clients
     h.advance(count=10)
     assert_home(h)
 
@@ -274,14 +278,13 @@ def test_timed_out_off_remains_owned_until_late_response(mode_runtime):
     assert n._mode_future is call.future and not call.future.cancelled()
     for _ in range(50):
         h.advance(.1)
-        n._idle_health_probe()
+        n._cleanup_tick()
     assert len(n.tracking_cli.calls) == 1  # no later OFF may overtake this one
     assert n.goal_callback(Goal().request) == h.mod.GoalResponse.REJECT
     assert n.call_tracking_srv(True, 0) == (False, 'CLEANUP_PENDING')
     call.future.set_result(NS(success=True, reason='OK'))
-    n._idle_health_probe()
-    n._publish_health()
-    assert json.loads(n._health_pub.messages[-1].data)['cleanup_ready']
+    n._cleanup_tick()
+    assert n._mode_cleanup_ready
     h.mode_policy = lambda enable, number: (0., True, 'OK')
     assert n.call_tracking_srv(True, 0) == (True, 'OK')
     assert [c.request.enable for c in n.tracking_cli.calls] == [False, True]
@@ -297,10 +300,10 @@ def test_late_on_must_finish_before_off_can_be_sent(mode_runtime):
     assert len(n.tracking_cli.calls) == 1 and n._mode_future is pending
     pending.set_result(NS(success=True, reason='OK'))
     h.mode_policy = lambda enable, number: (0., True, 'OK')
-    n._idle_health_probe()
+    n._cleanup_tick()
     assert [c.request.enable for c in n.tracking_cli.calls] == [True, False]
     h.advance(.1)
-    n._idle_health_probe()
+    n._cleanup_tick()
     assert n._mode_cleanup_ready
 
 
@@ -311,7 +314,7 @@ def test_failed_off_response_retries_without_new_on(mode_runtime):
     assert not n._mode_cleanup_ready
     for _ in range(40):
         h.advance(.1)
-        n._idle_health_probe()
+        n._cleanup_tick()
     assert n._mode_cleanup_ready
     assert all(not c.request.enable for c in n.tracking_cli.calls)
 
@@ -337,10 +340,10 @@ def test_cancel_during_pending_on_retains_request_until_off_settles(mode_runtime
     assert n.goal_callback(Goal().request) == h.mod.GoalResponse.REJECT
     pending.set_result(NS(success=True, reason='OK'))
     h.mode_policy = lambda enable, number: (0., True, 'OK')
-    n._idle_health_probe()
+    n._cleanup_tick()
     assert [c.request.enable for c in n.tracking_cli.calls] == [True, False]
     h.advance(.1)
-    n._idle_health_probe()
+    n._cleanup_tick()
     assert n.goal_callback(Goal().request) == h.mod.GoalResponse.ACCEPT
     assert n.call_tracking_srv(True, 0) == (True, 'OK')
     assert [c.request.enable for c in n.tracking_cli.calls] == [True, False, True]
@@ -366,67 +369,65 @@ def test_primary_failure_with_pending_cleanup_can_resume_patrol(nav_runtime, mod
     for _ in range(30):
         t.now = a.now
         t.environment()
-        tracker._idle_health_probe()
-        tracker._publish_health()
-        n._health_callback(tracker._health_pub.messages[-1])
+        tracker._cleanup_tick()
         a.advance(.1)
-    assert a.goal_count() == 1 and not n._tracking_mode_clear
+    assert a.goal_count() == 1 and not tracker._mode_cleanup_ready
     assert n._tracking_hold_reason == '' and n._acquisition_lock.locked
     assert n.collected_count == 0
 
 
 @pytest.mark.parametrize('cleanup_first', [False, True])
-def test_auto_collection_needs_both_cleanup_and_existing_patrol_rearm(nav_runtime, cleanup_first):
+def test_patrol_rearm_and_tracking_off_have_separate_owners(nav_runtime, mode_runtime, cleanup_first):
     h, n = nav_runtime, nav_runtime.node
-    h.cleanup = False
+    t, tracking = mode_runtime, mode_runtime.node
+    t.mode_policy = lambda enable, number: (None, True, 'OK')
+    tracking.call_tracking_srv(False)
+    pending = tracking._mode_future
     n._handle_tracking_failure('LOST_TARGET: gone; CLEANUP_UNCONFIRMED: timeout')
-    h.advance(count=12)
+    h.advance(count=5)
     patrol = Handle()
     n._action_client.calls[-1][1].set_result(patrol)
-    h.advance(count=15)
     if cleanup_first:
-        h.cleanup = True
-        h.advance()
+        pending.set_result(NS(success=True, reason='OK'))
+        tracking._cleanup_tick()
     n.object_callback(detection())
     assert patrol.cancels == 0 and n._acquisition_lock.locked
-    h.x = .12
-    h.advance()
+    for i in range(1, 13):
+        h.x = i * .01
+        h.advance(.1)
     patrol.result.set_result(outcome(4))
-    assert not n._acquisition_lock.locked and n.current_idx == 1
+    assert not n._acquisition_lock.locked
     next_patrol = Handle()
     n._action_client.calls[-1][1].set_result(next_patrol)
-    if not cleanup_first:
-        n.object_callback(detection())
-        assert next_patrol.cancels == 0
-        h.cleanup = True
-        h.advance()
+    h.advance(count=5)  # Existing acquisition cooldown also remains in force.
     n.object_callback(detection())
-    assert n._tracking_mode_clear and next_patrol.cancels == 1
-    assert not n._recycle_tracking_client.calls
     next_patrol.result.set_result(outcome(5))
     assert len(n._recycle_tracking_client.calls) == 1
+    allowed = tracking.goal_callback(Goal().request)
+    assert allowed == (1 if cleanup_first else 0)
+    if not cleanup_first:
+        n._recycle_tracking_client.calls[-1][1].set_result(Handle(accepted=False))
+        assert n._return_plan is not None and n._acquisition_lock.locked
+        assert not any(c.request.enable for c in tracking.tracking_cli.calls)
+        pending.set_result(NS(success=True, reason='OK'))
+        tracking._cleanup_tick()
+        assert tracking.goal_callback(Goal().request) == 1
 
 
-def test_manual_resume_waits_for_cleanup_then_allows_new_tracking(nav_runtime):
+def test_manual_retry_is_rejected_by_tracking_while_off_is_pending(nav_runtime, mode_runtime):
     h, n = nav_runtime, nav_runtime.node
-    h.common = h.cleanup = False
+    t, tracking = mode_runtime, mode_runtime.node
+    t.mode_policy = lambda enable, number: (None, True, 'OK')
+    tracking.call_tracking_srv(False)
+    h.common = False
     n._handle_tracking_failure('SENSOR_STALE: gap; CLEANUP_UNCONFIRMED: timeout')
     h.advance(count=6)
-    h.common = True
-    # Deliver new observations without advancing the patrol-return timer.
-    for _ in range(6):
-        h.now += .2
-        h.inputs()
-        n.object_callback(detection())
-    response = n.resume_sensor_hold_callback(None, NS())
-    assert not response.success and 'ON/OFF' in response.message
-    assert not n._recycle_tracking_client.calls
-    h.cleanup = True
-    h.now += .1
-    h.inputs()
     response = n.resume_sensor_hold_callback(None, NS())
     assert response.success and n._tracking_goal_pending
-    assert n._return_plan is None and not n._acquisition_lock.locked
+    assert tracking.goal_callback(Goal().request) == 0
+    n._recycle_tracking_client.calls[-1][1].set_result(Handle(accepted=False))
+    assert n._return_plan is not None
+    assert not any(c.request.enable for c in tracking.tracking_cli.calls)
 
 
 @pytest.mark.parametrize('terminal', ['success', 'test_stop', 'interrupted'])
@@ -449,5 +450,5 @@ def test_cleanup_failure_keeps_primary_outcome_and_count(mode_runtime, nav_runti
     handle.result.set_result(NS(status=4 if result.success else 6, result=result))
     a.node.recycle_tracking_result_callback(handle.result, generation)
     assert a.node.collected_count == (terminal == 'success')
-    assert not a.node._tracking_mode_clear
+    assert not t.node._mode_cleanup_ready
     assert (a.node.check_timer is not None) == (terminal == 'success')

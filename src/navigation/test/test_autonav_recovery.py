@@ -161,16 +161,10 @@ def nav_runtime(monkeypatch):
         h.seq += 1
         if h.scan_on and h.common:
             ns = n.get_clock().now().nanoseconds + round(h.scan_offset * 1e9)
-            n._patrol_scan_callback(NS(
+            n._drive_scan_callback(NS(
                 header=NS(stamp=NS(sec=ns // 10**9, nanosec=ns % 10**9), frame_id='base_scan'),
                 angle_min=-1., angle_max=1., angle_increment=.1,
                 range_min=.05, range_max=10., ranges=[1.] * 21))
-        if h.health_on:
-            health = dict(revision='patrol_recovery_v2', session='A', sequence=h.seq,
-                          released=h.released, common_ready=h.common,
-                          common_reason='' if h.common else 'SCAN_STALE',
-                          collision_ready=h.collision, cleanup_ready=h.cleanup)
-            n._health_callback(NS(data=json.dumps(health)))
         if h.odom_on:
             stamp = n.get_clock().now().to_msg()
             n._odom_callback(NS(header=NS(stamp=stamp, frame_id='odom'), child_frame_id='base_footprint',
@@ -186,10 +180,7 @@ def nav_runtime(monkeypatch):
     h.advance, h.inputs = advance, inputs
     h.goal_count = lambda: len(n._action_client.calls)
     h.states = lambda: [m.data for m in n._recovery_pub.messages]
-    # Seed idle cleanup health, not stopped odometry evidence.
-    h.odom_on = False
-    h.inputs()
-    h.odom_on = True
+    # Seed the common scan, not stopped odometry evidence.
     return h
 
 
@@ -243,22 +234,18 @@ def test_persistent_scan_failure_then_recovery_needs_no_manual_service(nav_runti
     assert h.goal_count() == 1
 
 
-def test_monitor_only_fault_allows_patrol_but_disables_new_collection(nav_runtime):
-    h = nav_runtime
-    h.collision = False
-    h.node._handle_tracking_failure('SAFETY_UNAVAILABLE: cause=SAFE_STALE')
+def test_monitor_only_fault_allows_patrol_and_tracking_owns_next_readiness(nav_runtime):
+    h, n = nav_runtime, nav_runtime.node
+    n._handle_tracking_failure('SAFETY_UNAVAILABLE: cause=SAFE_STALE')
     h.advance(count=12)
     assert h.goal_count() == 1
     handle = Handle()
-    h.node._action_client.calls[-1][1].set_result(handle)
-    h.node._acquisition_lock.locked = False  # isolate monitor readiness gate
-    h.advance(count=15)
-    h.node.object_callback(detection())
-    assert handle.cancels == 0
-    h.collision = True
-    h.advance(count=6)
-    h.node.object_callback(detection())
-    assert handle.cancels == 1
+    n._action_client.calls[-1][1].set_result(handle)
+    n.object_callback(detection())
+    assert handle.cancels == 0  # Acquisition lock remains until travel + success.
+    n._acquisition_lock.locked = False
+    n.object_callback(detection())
+    assert handle.cancels == 1  # Readiness belongs to the next Tracking Action.
 
 
 @pytest.mark.parametrize('reason', ['TEST_STOP', 'INTERNAL_ERROR',
@@ -292,8 +279,9 @@ def test_missing_tracking_health_does_not_replace_scan_or_odom_checks(nav_runtim
     h.node._handle_tracking_failure('COLLISION_BLOCKED: test')
     h.advance(count=10)
     assert h.goal_count() == 0
-    h.scan_on = True
     h.odom_on = False
+    h.now += 1.  # Expire the last stopped odometry before scan resumes.
+    h.scan_on = True
     h.advance(count=10)
     assert h.goal_count() == 0
     h.odom_on = True
@@ -301,39 +289,64 @@ def test_missing_tracking_health_does_not_replace_scan_or_odom_checks(nav_runtim
     assert h.goal_count() == 1
 
 
-def test_map_tf_recovers_without_operator(nav_runtime):
-    h = nav_runtime
-    h.node._recovery_tf.good = False
-    h.node._handle_tracking_failure('COLLISION_BLOCKED: test')
-    h.advance(count=20)
-    assert h.goal_count() == 0
-    h.node._recovery_tf.good = True
-    h.advance(count=10)
-    assert h.goal_count() == 1
+def test_nav2_owns_transform_failure_and_existing_action_retry(nav_runtime):
+    h, n = nav_runtime, nav_runtime.node
+    n._handle_tracking_failure('COLLISION_BLOCKED: test')
+    h.advance(count=5)
+    handle = Handle()
+    n._action_client.calls[-1][1].set_result(handle)
+    handle.result.set_result(NS(status=6, result=NS()))  # Nav2 reports its TF failure.
+    assert h.goal_count() == 2 and n._acquisition_lock.locked
 
 
-def test_nav2_inactive_then_active_auto_resumes_without_changing_lifecycle(nav_runtime):
-    h = nav_runtime
-    n = h.node
-    n._nav_state_clients['controller_server'].state = 2
+def test_nav2_action_availability_is_the_only_stack_readiness_probe(nav_runtime):
+    h, n = nav_runtime, nav_runtime.node
+    n._action_client.ready = False
     n._handle_tracking_failure('COLLISION_BLOCKED: test')
     h.advance(count=20)
     assert h.goal_count() == 0
-    n._nav_state_clients['controller_server'].state = 3
-    h.advance(count=10)
+    assert not any(name.endswith('/get_state') for name in n.clients)
+    n._action_client.ready = True
+    h.advance(count=5)
     assert h.goal_count() == 1
-    assert all(name.endswith('/get_state') for name in n.clients if 'controller' in name)
 
 
-def test_missing_nav_state_service_keeps_polling_with_no_request_flood(nav_runtime):
-    h = nav_runtime
-    c = h.node._nav_state_clients['planner_server']
-    c.answer = False
-    h.node._handle_tracking_failure('COLLISION_BLOCKED: test')
-    h.advance(count=40)
-    assert h.goal_count() == 0 and len(c.calls) <= 5
-    c.answer = True
-    h.advance(count=25)
+def test_return_does_not_require_tracking_health_or_lifecycle_service(nav_runtime, monkeypatch):
+    h, n = nav_runtime, nav_runtime.node
+    def forbidden(*args):
+        raise AssertionError('No graph queries during handoff')
+    monkeypatch.setattr(n, 'get_publishers_info_by_topic', forbidden)
+    n._recycle_tracking_client.ready = False
+    n._handle_tracking_failure('LOST_TARGET: gone')
+    h.advance(count=5)
+    assert h.goal_count() == 1
+    assert '/tracking_collision/health' not in n.subs
+    assert not any('get_state' in name for name in n.clients)
+
+
+@pytest.mark.parametrize('fault', ['scan', 'moving', 'tracking'])
+def test_common_departure_conditions_still_gate_handoff(nav_runtime, fault):
+    h, n = nav_runtime, nav_runtime.node
+    h.scan_on = fault != 'scan'
+    h.linear = .08 if fault == 'moving' else 0.
+    n._tracking_release_confirmed = fault != 'tracking'
+    h.now += 1.
+    n._handle_tracking_failure('COLLISION_BLOCKED: test')
+    h.advance(count=20)
+    assert h.goal_count() == 0
+    h.scan_on, h.linear, n._tracking_release_confirmed = True, 0., True
+    h.advance(count=5)
+    assert h.goal_count() == 1
+
+
+def test_action_server_presence_cannot_mask_common_scan_failure(nav_runtime):
+    h, n = nav_runtime, nav_runtime.node
+    h.scan_on = False
+    n._handle_tracking_failure('COLLISION_BLOCKED: test')
+    h.advance(count=20)
+    assert n._action_client.ready and h.goal_count() == 0
+    h.scan_on = True
+    h.advance(count=5)
     assert h.goal_count() == 1
 
 
@@ -393,11 +406,11 @@ def test_stop_after_goal_sent_cancels_late_accepted_goal(nav_runtime):
 
 def test_pending_action_or_tracking_ownership_blocks_handoff(nav_runtime):
     h = nav_runtime
-    h.released = False
+    h.node._tracking_release_confirmed = False
     h.node._handle_tracking_failure('COLLISION_BLOCKED: test')
     h.advance(count=10)
     assert h.goal_count() == 0
-    h.released = True
+    h.node._tracking_release_confirmed = True
     h.node._tracking_goal_pending = True
     h.advance(count=10)
     assert h.goal_count() == 0
@@ -473,17 +486,12 @@ def test_class_and_goal_snapshot_not_overwritten_while_tracking(nav_runtime):
     assert n.y_min == 200.  # basket observation deliberately still updates
 
 
-def test_cleanup_unconfirmed_does_not_freeze_patrol_but_disables_collection(nav_runtime):
-    h = nav_runtime
-    n = h.node
-    h.cleanup = False
-    n._handle_tracking_failure('COLLISION_BLOCKED: test; CLEANUP_UNCONFIRMED: test')
-    h.advance(count=15)
-    assert h.goal_count() == 1 and not n._tracking_mode_clear
-    h.cleanup = True
-    h.advance(count=10)
-    assert n._tracking_mode_clear
-    assert 'set_tracking_mode' not in n.clients  # one ON/OFF owner in Tracking
+def test_cleanup_is_owned_by_tracking_and_does_not_freeze_released_patrol(nav_runtime):
+    h, n = nav_runtime, nav_runtime.node
+    n._handle_tracking_failure('LOST_TARGET: gone; CLEANUP_UNCONFIRMED: timeout')
+    h.advance(count=5)
+    assert h.goal_count() == 1
+    assert 'set_tracking_mode' not in n.clients
 
 
 def test_no_saved_patrol_goal_never_fabricates_one(nav_runtime):
@@ -494,81 +502,21 @@ def test_no_saved_patrol_goal_never_fabricates_one(nav_runtime):
     assert h.goal_count() == 0 and h.node._tracking_safety_hold
 
 
-def test_timer_uses_steady_time_and_service_names(nav_runtime):
+def test_return_timer_and_public_reset_service_remain(nav_runtime):
     n = nav_runtime.node
     assert n._recovery_clock.clock_type == 1
-    assert '/controller_server/get_state' in n.clients
     assert '/auto_nav/reset_tracking_hold' in n.services
-    assert '/tracking_collision/health' in n.subs
+    assert '/scan' in n.subs
+    assert '/tracking_collision/health' not in n.subs
 
 
-def test_idle_monitor_probe_is_private_not_a_motion_command(tracking_runtime):
-    h = tracking_runtime
-    n = h.node
-    h.now = .1
-    h.environment()
-    n._idle_health_probe()
-    assert n._raw_pub.messages[-1].linear.x == 0.
-    assert not n.cmd_vel_pub.messages
-    n._safe_callback(Twist())
-    n._publish_health()
-    assert not n.cmd_vel_pub.messages
-    row = json.loads(n._health_pub.messages[-1].data)
-    assert row['common_ready'] and row['released']
-
-
-def test_monitor_failure_common_health_stays_available_for_nav2(tracking_runtime):
-    h = tracking_runtime
-    n = h.node
-    h.now = .1
-    h.environment()
-    n._geometry_at = {'approach': None, 'stop': None}
-    n._publish_health()
-    row = json.loads(n._health_pub.messages[-1].data)
-    assert row['common_ready']
-    assert not row['collision_ready']
-
-
-def test_bad_scan_or_foreign_wheel_writer_blocks_common_health(tracking_runtime):
-    h = tracking_runtime
-    n = h.node
-    h.now = .1
-    h.environment()
-    n.wheel_names = ['recycle_tracking_node', 'auto_nav', 'controller_server',
-                     'recycle', 'teleop_twist_keyboard']
-    n._publish_health()
-    assert not json.loads(n._health_pub.messages[-1].data)['common_ready']
-    n.wheel_names.remove('teleop_twist_keyboard')
-    h.now = 2.
-    n._publish_health()
-    assert not json.loads(n._health_pub.messages[-1].data)['common_ready']
-
-
-def test_idle_health_dwell_and_late_moving_safe_never_drives(tracking_runtime):
-    h = tracking_runtime
-    n = h.node
-    for i in range(1, 10):
-        h.now = i * .1
-        h.environment()
-        n._idle_health_probe()
+def test_idle_cleanup_tick_and_late_safe_emit_no_collision_traffic(tracking_runtime):
+    h, n = tracking_runtime, tracking_runtime.node
+    for _ in range(10):
+        h.advance(.1)
+        n._cleanup_tick()
         n._safe_callback(Twist())
-        n._publish_health()
-    assert json.loads(n._health_pub.messages[-1].data)['collision_ready']
-    before = n._idle_safe_sequence
-    moving = Twist()
-    moving.linear.x = .08
-    n._safe_callback(moving)
-    assert n._idle_safe_sequence == before
-    assert not n.cmd_vel_pub.messages
-
-
-def test_active_goal_does_not_get_idle_probe(tracking_runtime):
-    h = tracking_runtime
-    n = h.node
-    n._owns_cmd_vel = True
-    count = len(n._raw_pub.messages)
-    n._idle_health_probe()
-    assert len(n._raw_pub.messages) == count
+    assert not n._raw_pub.messages and not n.cmd_vel_pub.messages
 
 
 def test_manual_sensor_retry_cancels_auto_return_and_old_acquisition_lock(nav_runtime):
@@ -649,81 +597,40 @@ def test_nav2_unreachable_server_prevents_return_then_recovers(nav_runtime):
     assert h.goal_count() == 1
 
 
-def test_input_recovery_limit_retires_target_not_infinite_same_action(tracking_runtime):
-    from navigation.tracking_control import TrackingController, TrackingConfig, Command
-    h = tracking_runtime
-    n = h.node
-    n._owns_cmd_vel = True
-    n._controller = TrackingController(TrackingConfig(), 0, 0.)
-    for i in range(1, 4):
-        h.now = i * .2
-        h.environment()
-        n._controller.pause_for_safety()
-        n._safety.request(Command(.05, 0), 'APPROACH', h.now)
-        n._safety.accept_safe(Command(.05, 0), h.now)
-        n._safety.realign_required = True
-        n._safety.last_fault_reason = 'SCAN_STALE'
-        n._apply_safety_locked()
-    assert n._input_auto_recoveries == 3
-    assert n._safety.failure == 'SAFETY_UNAVAILABLE'
-    assert 'INPUT_RECOVERY_LIMIT' in n._controller.reason
-    assert n.cmd_vel_pub.messages[-1].linear.x == 0.
-
-
 @pytest.mark.parametrize('fault', ['monitor', 'scan'])
-def test_actual_tracking_result_and_health_drive_actual_autonav_return(
-        nav_runtime, tracking_runtime, fault):
-    """Cross-node scenario, no invented healthy status or duplicated FSM."""
+def test_tracking_result_alone_hands_back_to_autonav(nav_runtime, tracking_runtime, fault):
     a, t = nav_runtime, tracking_runtime
-    n, tracking = a.node, t.node
     t.monitor_on = fault != 'monitor'
     t.scan_on = fault != 'scan'
-    result = tracking.execute_callback(t.goal)
-    assert not result.success
+    result = t.node.execute_callback(t.goal)
     assert result.message.startswith('SAFETY_NOT_READY:')
-    assert not tracking._owns_cmd_vel
-    a.now = max(a.now, t.now) + .1  # both real nodes share a monotonic time axis
-    f = Future()
-    f.set_result(NS(status=6, result=result))
-    n.recycle_tracking_result_callback(f)
-    a.health_on = False  # receive only real adapter health below
-    a.scan_on = False  # both nodes observe the same original scan messages
-    # Keep fault for 2 seconds. Monitor-only failure allows otherwise healthy
-    # patrol; missing common scan does not. No manual resume/reset is called.
-    for i in range(60):
-        t.now = a.now
-        if i >= 20:
-            t.monitor_on = t.scan_on = True
-        t.environment()
-        if t.scan_on:
-            n._patrol_scan_callback(tracking._scan_pub.messages[-1])
-        tracking._idle_health_probe()
-        if t.monitor_on:
-            tracking._safe_callback(Twist())
-        tracking._publish_health()
-        n._health_callback(tracking._health_pub.messages[-1])
-        a.advance(.1)
-        if i == 19:
-            assert a.goal_count() == (1 if fault == 'monitor' else 0)
-    assert a.goal_count() == 1
-    assert n._acquisition_lock.locked
-    # Idle health probes, including after recovery, must not drive the wheels.
-    assert all(m.linear.x == 0 and m.angular.z == 0 for m in tracking.cmd_vel_pub.messages)
+    assert not t.node._owns_cmd_vel
+    a.now = t.now + 1.
+    a.scan_on = t.scan_on
+    f = Future(); f.set_result(NS(status=6, result=result))
+    a.node.recycle_tracking_result_callback(f)
+    a.advance(count=10)
+    assert a.goal_count() == (0 if fault == 'scan' else 1)
+    a.scan_on = True
+    a.advance(count=5)
+    assert a.goal_count() == 1 and a.node._acquisition_lock.locked
+    assert all(m.linear.x == 0 and m.angular.z == 0 for m in t.node.cmd_vel_pub.messages)
 
 
-def test_one_scan_cannot_be_counted_again_by_fast_odom(nav_runtime):
-    h = nav_runtime
-    h.node._handle_tracking_failure('COLLISION_BLOCKED: test')
+def test_fresh_single_common_scan_does_not_require_artificial_sample_dwell(nav_runtime):
+    h, n = nav_runtime, nav_runtime.node
+    n._handle_tracking_failure('COLLISION_BLOCKED: test')
     h.inputs()
     h.scan_on = False
-    h.advance(.1, count=7)
-    assert h.goal_count() == 0
-
-
-def test_one_stopped_odom_cannot_be_counted_again_by_scan_reports(nav_runtime):
-    h = nav_runtime
-    h.node._handle_tracking_failure('COLLISION_BLOCKED: test')
     h.advance(.1, count=2)
+    assert h.goal_count() == 1
+
+
+def test_expired_stopped_odom_cannot_be_renewed_by_scan(nav_runtime):
+    h, n = nav_runtime, nav_runtime.node
+    h.inputs()
     h.odom_on = False
-    h.advance(.1, count=5)
+    h.now += 1.
+    n._handle_tracking_failure('COLLISION_BLOCKED: test')
+    h.advance(count=5)
     assert h.goal_count() == 0
