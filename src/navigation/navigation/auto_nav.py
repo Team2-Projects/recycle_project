@@ -1046,6 +1046,9 @@ class AutoNav(Node):
             return
 
         x, y = self.waypoints[self.current_idx]
+        # The final waypoint is HOME; finish this leg without a new collection.
+        if self.current_idx > len(self.waypoints) - 2:
+            self.object_found = True
         self.send_goal(x, y)
 
     def send_goal(self, x, y, purpose='PATROL'):

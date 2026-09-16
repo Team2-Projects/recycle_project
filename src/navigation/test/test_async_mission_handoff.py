@@ -222,6 +222,34 @@ def test_normal_patrol_and_collection_keep_count_timers_and_index(nav_runtime):
     assert n._action_client.calls[-1][0].pose.pose.position.x == n.waypoints[1][0]
 
 
+@pytest.mark.parametrize('collected', [0, 2])
+@pytest.mark.parametrize('retry', [False, True])
+def test_final_waypoint_ignores_detections_and_keeps_completion_flow(nav_runtime, collected, retry):
+    h, n = nav_runtime, nav_runtime.node
+    n.object_found = False
+    n.collected_count = collected
+    n.current_idx = len(n.waypoints) - 1
+    n.send_next_goal()
+    home = Handle()
+    n._action_client.calls[-1][1].set_result(home)
+    if retry:
+        home.result.set_result(outcome(6))
+        home = Handle()
+        n._action_client.calls[-1][1].set_result(home)
+    assert n._action_client.calls[-1][0].pose.pose.position.x == n.home_x
+    servo_calls = len(n.servo_client.calls)
+    n.object_callback(detection())
+    assert home.cancels == 0
+    assert not n._recycle_tracking_client.calls
+    assert len(n.servo_client.calls) == servo_calls
+    assert n.collected_count == collected
+    home.result.set_result(outcome(4))
+    assert n.current_idx == len(n.waypoints)
+    assert len(n._recycle_client.calls) == int(collected > 0)
+    if not collected:
+        assert json.loads(n.schedule_status_pub.messages[-1].data)['status'] == 'COMPLETE'
+
+
 @pytest.fixture
 def mode_runtime(runtime, monkeypatch):
     """Use production service sequencing; fake only clock/wait and ROS client."""

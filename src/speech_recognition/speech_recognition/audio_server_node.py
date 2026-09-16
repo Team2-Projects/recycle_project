@@ -25,7 +25,7 @@ class AudioServerNode(Node):
 
 
         # 로컬 PC 내 모델 저장 경로
-        model_dir = os.path.expanduser('~/turtlebot3_ws/src/speech_recognition/models/whisper_tiny_openvino')
+        model_dir = os.path.expanduser('~/turtlebot3_ws/src/speech_recognition/models/whisper_base_openvino')
 
         try:
             self.model = OVModelForSpeechSeq2Seq.from_pretrained(model_dir)

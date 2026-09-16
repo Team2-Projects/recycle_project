@@ -21,8 +21,9 @@ clf_idx = {
 # OpenVINO 분류 모델 경로
 model_path = (
     '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
-    '0909yolo_based(A)_best_openvino/model.xml'
+    '0912_trash_yolo_based(A)_best_openvino/model.xml'
 )
+
 
 class YoloNode(Node):
     def __init__(self):
@@ -30,19 +31,13 @@ class YoloNode(Node):
         self.frame_count = 0
         self.bridge = CvBridge() # ★ bridge 초기화도 잊지 마세요 ★
         self.declare_parameter('conf', 0.25)
-        # 모델 경로를 확인하세요
-        # 1. 패키지의 share 경로를 자동으로 찾음
-        # package_share_directory = get_package_share_directory('my_yolo_cpp_pkg')
 
-        # # 2. 모델 경로를 조합
-        # model_path = os.path.join(package_share_directory, 'models', 'transfer_v2_openvino_model')
 
-        # # 3. 모델 로드
-        # self.model = YOLO(model_path)
+        # YOLO 모델 로드
         self.model = YOLO(
-    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
-    task='segment'
-)
+            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo0914_best_openvino_model',
+            task='segment'
+        )
         
         self.subscription = self.create_subscription(
             CompressedImage, '/image_raw/compressed', self.listener_callback, 10)

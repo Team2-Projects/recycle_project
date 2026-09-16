@@ -22,7 +22,7 @@ from rclpy.qos import (
 # OpenVINO 분류 모델 경로
 model_path = (
     '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
-    '0909yolo_based(A)_best_openvino/model.xml'
+    '0912_trash_yolo_based(A)_best_openvino/model.xml'
 )
 
 
@@ -49,7 +49,7 @@ class YoloNode(Node):
 
         # YOLO 모델 로드
         self.model = YOLO(
-            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/0907_yolo_openvino_model',
+            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo0914_best_openvino_model',
             task='segment'
         )
 

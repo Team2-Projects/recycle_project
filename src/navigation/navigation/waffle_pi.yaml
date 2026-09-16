@@ -136,7 +136,7 @@ controller_server:
 
       footprint_model:
         type: "polygon"
-        vertices: "[[0.268, -0.14], [0.268, 0.14], [-0.196, 0.14], [-0.196, -0.14]]"
+        vertices: "[[0.325, -0.14], [0.325, 0.14], [-0.196, 0.14], [-0.196, -0.14]]"
 
       # 장애물
       min_obstacle_dist: 0.15
@@ -210,7 +210,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      footprint: "[[0.268, -0.14], [0.268, 0.14], [-0.196, 0.14], [-0.196, -0.14]]"
+      footprint: "[[0.325, -0.14], [0.325, 0.14], [-0.196, 0.14], [-0.196, -0.14]]"
       footprint_padding: 0.005
       plugins: ["obstacle_layer", "inflation_layer"]
       inflation_layer:
@@ -248,7 +248,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: true
-      footprint: "[[0.268, -0.14], [0.268, 0.14], [-0.196, 0.14], [-0.196, -0.14]]"
+      footprint: "[[0.325, -0.14], [0.325, 0.14], [-0.196, 0.14], [-0.196, -0.14]]"
       footprint_padding: 0.01
       resolution: 0.05                 # 오토튜닝 및 경로 탐색 효율성을 위해 0.05m(5cm) 추천 (기존 0.02)
       track_unknown_space: true
