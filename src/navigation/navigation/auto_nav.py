@@ -208,6 +208,7 @@ class AutoNav(Node):
         self.object_found = True
         self.is_returning_home = True
 
+        self.object_found = True
         self.get_logger().info('사용자 STOP 또는 배터리 부족 → HOME 복귀')
         self.send_goal(self.home_x, self.home_y)
 
@@ -440,6 +441,8 @@ class AutoNav(Node):
             return
 
         x, y = self.waypoints[self.current_idx]
+        if self.current_idx > len(self.waypoints) - 2:
+            self.object_found = True
         self.send_goal(x, y)
 
     def send_goal(self, x, y):
