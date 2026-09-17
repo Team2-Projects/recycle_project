@@ -3,8 +3,7 @@ import subprocess
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
-from gtts import gTTS
-import pygame
+
 from geometry_msgs.msg import Twist
 from .intent_parser import IntentParser
 import json
@@ -19,9 +18,6 @@ from rclpy.qos import (
 class TtsSubscriber(Node):
     def __init__(self):
         super().__init__('tts_subscriber')
-        
-        # pygame 오디오 믹서 초기화
-        pygame.mixer.init()
         
         # 1. 저장용 폴더 자동 생성 (없으면 생성)
         self.save_dir = 'sound_files'
@@ -42,11 +38,12 @@ class TtsSubscriber(Node):
         )
 
         self.path_pub = self.create_publisher(Int32MultiArray, '/patrol_indexs', qos)
-
         self.speech_pub = self.create_publisher(String, '/speech_pub', 10)
+        
+        # [추가] 라즈베리파이 스피커 노드로 음성 출력을 요청할 퍼블리셔 생성
+        self.play_tts_pub = self.create_publisher(String, '/play_tts', 10)
 
-        self.collected_count = 0
-        self.parser = IntentParser()
+        self.parser = IntentParser(self) # self 전달!
         self.command_flag = 0
       
         self.get_logger().info('🔊 자동 음성 출력 노드가 준비되었습니다.')
@@ -57,7 +54,6 @@ class TtsSubscriber(Node):
 
     def is_auto_nav_alive(self):
         node_names = self.get_node_names()
-
         return any(
             name.strip('/') == 'auto_nav'
             for name in node_names
@@ -66,7 +62,6 @@ class TtsSubscriber(Node):
     def listener_callback(self, msg):
         text = msg.data.strip()
 
-        
         # 1. 빈 문자열이면 종료
         if not text:
             return
@@ -116,7 +111,7 @@ class TtsSubscriber(Node):
             )
 
         elif self.command_flag == 1:
-            start_time= self.parser.get_start_time(text)
+            start_time = self.parser.get_start_time(text)
             self.get_logger().info(f'🔊 start_time for flag_1 수신: "{start_time}"')
 
             speech_msg = String()
@@ -130,29 +125,17 @@ class TtsSubscriber(Node):
         elif self.command_flag == 2:
             return_text = self.parser.parse()
             self.get_logger().info(f'🔊 return_text for flag_2 수신: "{return_text}"')
-
-            file_path = os.path.join(self.save_dir, f'return_text.mp3')
-            self.collected_count += 1
-
+            
             try:
-                # 1. gTTS 변환 및 저장 (잘못된 logger 줄 삭제)
-                tts = gTTS(text=text, lang='ko')
-                tts.save(file_path)
-
-                # 2. 음성 파일 재생
-                pygame.mixer.music.load(file_path)
-                pygame.mixer.music.play()
-
-                # 재생이 끝날 때까지 대기
-                while pygame.mixer.music.get_busy():
-                    pygame.time.Clock().tick(10)
-
-                # 3. 언로드 및 성공 로그
-                pygame.mixer.music.unload()
-                self.get_logger().info('🔊 음성 출력 완료!')
+                # 라즈베리파이의 speaker_node가 들을 수 있도록 /play_tts 토픽으로 텍스트 발행
+                tts_msg = String()
+                tts_msg.data = return_text 
+                self.play_tts_pub.publish(tts_msg)
+                
+                self.get_logger().info(f'🔊 라즈베리파이로 음성 출력 요청 전송: "{return_text}"')
 
             except Exception as e:
-                self.get_logger().error(f'음성 출력 실패: {e}')
+                self.get_logger().error(f'음성 출력 요청 실패: {e}')
 
 def main(args=None):
     rclpy.init(args=args)
@@ -163,7 +146,6 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        pygame.mixer.quit()
         node.destroy_node()
         rclpy.shutdown()
 
