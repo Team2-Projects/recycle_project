@@ -88,9 +88,10 @@ class YoloNode(Node):
         # =====================================
         # 1단계: 분류 모델
         # =====================================
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-   
-        frame_classify = Image.fromarray(frame)
+        frame_classify = Image.fromarray(frame_rgb)
+
         frame_classify  = frame_classify.resize((640, 480))
                    
                     # ========================================================

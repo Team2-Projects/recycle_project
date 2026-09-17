@@ -315,8 +315,9 @@ class YoloNode(Node):
         # =====================================
         # 1단계: 분류 모델
         # =====================================
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        frame_classify = Image.fromarray(frame)
+        frame_classify = Image.fromarray(frame_rgb)
 
         frame_classify  = frame_classify.resize((640, 480))
                    
@@ -346,6 +347,9 @@ class YoloNode(Node):
         frame_classify  /= 255.0
         frame_classify  = np.transpose(frame_classify , (2, 0, 1))
         frame_classify  = np.expand_dims(frame_classify , axis=0)
+
+
+
 
         result = self.compiled_classify_model([frame_classify])[self.output_layer]
 
