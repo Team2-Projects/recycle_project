@@ -17,12 +17,12 @@ from rclpy.qos import (
     ReliabilityPolicy,
     HistoryPolicy
 )
-
+from PIL import Image
 
 # OpenVINO 분류 모델 경로
 model_path = (
     '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
-    '0912_trash_yolo_based(A)_best_openvino/model.xml'
+    '0917_yolo_based(A)_best_openvino/model.xml'
 )
 
 
@@ -68,8 +68,8 @@ class YoloNode(Node):
         )
 
         # OpenVINO 입출력 키
-        self.input_key = self.compiled_classify_model.input(0)
-        self.output_key = self.compiled_classify_model.output(0)
+        self.input_layer = self.compiled_classify_model.input(0)
+        self.output_layer = self.compiled_classify_model.output(0)
 
         # 이미지 구독
         self.subscription = self.create_subscription(
@@ -316,43 +316,38 @@ class YoloNode(Node):
         # 1단계: 분류 모델
         # =====================================
 
-        frame_classify = frame
+        frame_classify = Image.fromarray(frame)
 
-        # 640 x 640 canvas 생성
-        canvas = np.full(
-            (640, 640, 3),
-            114,
-            dtype=np.uint8
-        )
+        frame_classify  = frame_classify.resize((640, 480))
+                   
+                    # ========================================================
+                    # YOLO 방식 Padding
+                    # ========================================================
+                   
+        canvas = Image.new(
+                        "RGB",
+                        (640, 640),
+                        (114, 114, 114)
+                    )
+                   
+                    # 위/아래 80 pixel씩 padding
+        canvas.paste(
+                        frame_classify ,
+                        (0, 80)
+                    )
+                   
+        frame_classify  = canvas
+                   
+        frame_classify  = np.array(
+                        frame_classify ,
+                        dtype=np.float32
+                    )
+                   
+        frame_classify  /= 255.0
+        frame_classify  = np.transpose(frame_classify , (2, 0, 1))
+        frame_classify  = np.expand_dims(frame_classify , axis=0)
 
-        # 위에서부터 80 pixel padding
-        canvas[80:560, :, :] = frame_classify
-
-        frame_classify = canvas.astype(
-            np.float32
-        )
-
-        # 0~1 정규화
-        frame_classify /= 255.0
-
-        # HWC -> NCHW
-        frame_classify = np.transpose(
-            frame_classify,
-            (2, 0, 1)
-        )
-
-        # Batch dimension
-        frame_classify = np.expand_dims(
-            frame_classify,
-            axis=0
-        )
-
-        result = self.compiled_classify_model(
-            {
-                self.input_key:
-                frame_classify
-            }
-        )[self.output_key]
+        result = self.compiled_classify_model([frame_classify])[self.output_layer]
 
         self.pred_class = np.argmax(
             result[0]
