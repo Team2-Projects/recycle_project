@@ -269,7 +269,7 @@ class YoloNode(Node):
 
 
     # =====================================
-    # 화면 기준 x=400에 가장 가까운 객체 선택
+    # 화면 중앙 x=320에 가장 가까운 객체 선택
     # =====================================
 
     def get_closest_to_center(self, boxes):
@@ -277,7 +277,7 @@ class YoloNode(Node):
         centers_x = boxes.xywh[:, 0].tolist()
 
         distances = [
-            abs(x - 350)
+            abs(x - 320)
             for x in centers_x
         ]
 

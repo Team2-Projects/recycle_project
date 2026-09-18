@@ -357,7 +357,7 @@ class AutoNav(Node):
             self.stop_pending = False
             self.return_home_by_stop()
             return
-        self.tracking_retry_after = time.monotonic() + 2.0
+        self.tracking_retry_after = time.monotonic() + 0.5
         self.object_found = False
         self.send_goal(self.resume_x, self.resume_y)
 

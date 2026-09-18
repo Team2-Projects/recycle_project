@@ -30,7 +30,7 @@ class RecycleTrackingNode(Node):
             'align_timeout_sec': 15.0,
             'tracking_timeout_sec': 40.0,
             'detection_timeout_sec': 1.0,
-            'target_lost_timeout_sec': 4.0,
+            'target_lost_timeout_sec': 6.0,
             'tracking_service_timeout_sec': 3.0,
             'approach_steer_kp': 0.0004,
             'approach_max_angular_speed': 0.06,
@@ -212,8 +212,8 @@ class RecycleTrackingNode(Node):
                 and msg.coord[2] > 0 and msg.coord[3] > 0)
 
     def _run_tracking(self, goal_handle, deadline):
-        # 좌표·속도·마지막 전진 시간은 main에서 사용하던 보정값을 유지한다.
-        reference_x, stop_lower_y = 350.0, 430.0
+        # 가로 640픽셀 영상의 중앙을 정렬 기준으로 사용한다.
+        reference_x, stop_lower_y = 320.0, 430.0
         forward_speed, align_speed = 0.10, 0.05
         period, final_duration = 0.10, 3.0
         phase = '정렬'
