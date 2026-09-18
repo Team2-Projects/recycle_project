@@ -4,6 +4,13 @@ from glob import glob
 
 package_name = 'my_yolo_cpp_pkg'
 
+# 저장소의 모델을 하위 폴더 구조 그대로 설치한다. 별도 다운로드는 하지 않는다.
+model_data_files = [
+    (os.path.join('share', package_name, os.path.dirname(path)), [path])
+    for path in sorted(glob('models/**/*', recursive=True))
+    if os.path.isfile(path)
+]
+
 setup(
     name=package_name,
     version='0.0.0',
@@ -14,7 +21,7 @@ setup(
         # 이 부분이 가장 중요합니다!
         (os.path.join('share', package_name, 'msg'), glob('msg/*.msg')),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py'))
-    ],
+    ] + model_data_files,
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='hee',
