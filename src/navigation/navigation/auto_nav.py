@@ -69,6 +69,7 @@ class AutoNav(Node):
         self.resume_y = None
         self.current_handle = None
         self.tracking_handle = None
+        self.tracking_retry_after = 0.0
         self.recycle_handle = None
 
         self.going_home = False  
@@ -254,6 +255,10 @@ class AutoNav(Node):
             return
             
 
+        # 실패 직후에는 잠시 순찰을 진행한 뒤 새로운 수거를 허용한다.
+        if time.monotonic() < self.tracking_retry_after:
+            return
+
         obj_name = object_name.get(msg.id, '-')
         conf_val = f"{msg.confidence:.2f}" if hasattr(msg, 'confidence') else "1.00"
         self.publish_recycle_success(obj_name, conf_val)
@@ -304,9 +309,7 @@ class AutoNav(Node):
     def recycle_tracking_goal_response_callback(self, future):
         goal_handle = future.result()
         if not goal_handle.accepted:
-            self.get_logger().warn('Tracking 목표 거절됨! 원래 복귀 지점으로 주행')
-            self.object_found = False
-            self.send_goal(self.resume_x, self.resume_y)
+            self.resume_after_tracking_failure('수거 요청이 거절됨')
             return
 
         self.tracking_handle = goal_handle
@@ -324,14 +327,15 @@ class AutoNav(Node):
         result = response.result
         self.tracking_handle = None
 
-        if status == GoalStatus.STATUS_CANCELED:
+        if (status == GoalStatus.STATUS_CANCELED
+                or self.cancel_reason in ("STOP", "BATTERY_LOW") or self.stop_pending):
+            self.stop_pending = False
+            self.trigger_servo_movement(0, 0)
             self.return_home_by_stop()
             return
 
         if not result.success:
-            self.get_logger().warn('Tracking 접근 실패!')
-            self.object_found = False
-            self.send_goal(self.resume_x, self.resume_y)
+            self.resume_after_tracking_failure(result.message)
             return
 
         self.get_logger().info("Successed tracking! Triggering servo & pantilt...")
@@ -344,6 +348,18 @@ class AutoNav(Node):
         self.y_min = None
         self.get_logger().info('⏳ 3초간 수거함 상태 확인 중...')
         self.check_timer = self.create_timer(3.0, self.check_recycle_condition_callback)
+
+    def resume_after_tracking_failure(self, reason):
+        """서보를 닫힘 위치로 보내고 실패 사유를 남긴 뒤 기존 순찰 목표로 복귀한다."""
+        self.get_logger().warn(f'수거 중단: {reason}')
+        self.trigger_servo_movement(0, 0)
+        if self.cancel_reason in ("STOP", "BATTERY_LOW") or self.stop_pending:
+            self.stop_pending = False
+            self.return_home_by_stop()
+            return
+        self.tracking_retry_after = time.monotonic() + 2.0
+        self.object_found = False
+        self.send_goal(self.resume_x, self.resume_y)
 
     def _delayed_resume(self):
         self.delay_timer.cancel()

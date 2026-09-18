@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
@@ -7,7 +9,6 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 from ament_index_python.packages import get_package_share_directory
-import os
 import openvino as ov
 from PIL import Image
 
@@ -19,11 +20,9 @@ clf_idx = {
     'person': 4
 }
 
-# OpenVINO 분류 모델 경로
-model_path = (
-    '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/'
-    '0917_yolo_based(A)_best_openvino/model.xml'
-)
+# 실행 위치와 사용자 이름에 의존하지 않도록 ROS 패키지의 모델 폴더를 사용한다.
+model_dir = Path(get_package_share_directory('my_yolo_cpp_pkg')) / 'models'
+model_path = str(model_dir / '0917_yolo_based(A)_best_openvino' / 'model.xml')
 
 
 class YoloNode(Node):
@@ -36,7 +35,7 @@ class YoloNode(Node):
 
         # YOLO 모델 로드
         self.model = YOLO(
-            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo0914_best_openvino_model',
+            str(model_dir / 'yolo0914_best_openvino_model'),
             task='segment'
         )
         
