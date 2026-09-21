@@ -31,12 +31,12 @@ class YoloNode(Node):
         super().__init__('yolo_node')
         self.frame_count = 0
         self.bridge = CvBridge() # ★ bridge 초기화도 잊지 마세요 ★
-        self.declare_parameter('conf', 0.25)
+        self.declare_parameter('conf', 0.50)
 
 
         # YOLO 모델 로드
         self.model = YOLO(
-            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo0914_best_openvino_model',
+            '/home/hee/turtlebot3_ws/src/my_yolo_cpp_pkg/models/yolo_0921_best_openvino_model',
             task='segment'
         )
         
