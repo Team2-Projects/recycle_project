@@ -35,7 +35,7 @@ class YoloNode(Node):
 
         # YOLO 모델 로드
         self.model = YOLO(
-            str(model_dir / 'yolo0914_best_openvino_model'),
+            str(model_dir / 'yolo_0921_best_openvino_model'),
             task='segment'
         )
         
