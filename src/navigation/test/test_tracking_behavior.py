@@ -70,7 +70,7 @@ class Goal:
         self.state = '취소'
 
 
-def detection(x=320.0, bottom=300.0, class_id=0):
+def detection(x=340.0, bottom=300.0, class_id=0):
     """검출기의 좌표 형식에 맞는 관측을 만든다."""
     return SimpleNamespace(id=class_id, coord=[x, bottom - 40.0, 60.0, 80.0])
 
@@ -120,7 +120,7 @@ def test_small_error_steers_large_error_stops_and_realigns(rig):
         if now < 0.3:
             msg = detection()
         elif now < 0.6:
-            msg = detection(x=300.0)
+            msg = detection(x=320.0)
         elif now < 0.9:
             msg = detection(x=280.0)
         elif now < 1.3:
@@ -140,11 +140,11 @@ def test_small_error_steers_large_error_stops_and_realigns(rig):
     assert [enable for enable, _ in rig.requests] == [True, False]
 
 
-@pytest.mark.parametrize('x,sign', [(300.0, 1), (340.0, -1)])
+@pytest.mark.parametrize('x,sign', [(320.0, 1), (360.0, -1)])
 def test_correction_direction(rig, x, sign):
     """좌우 오차에 맞는 방향으로 이동 중 보정한다."""
     def feed(now):
-        rig.node.obj_callback(detection(x=320.0 if now < 0.3 else x))
+        rig.node.obj_callback(detection(x=340.0 if now < 0.3 else x))
         if now >= 0.7:
             rig.goal.is_cancel_requested = True
             rig.node.cancel_callback(rig.goal)
@@ -156,14 +156,14 @@ def test_correction_direction(rig, x, sign):
 
 
 @pytest.mark.parametrize('kind,expected,limit', [
-    ('정렬', '정렬 시간 초과', 15.0),
-    ('접근', '전체 주행 시간 초과', 40.0),
-    ('재정렬 반복', '전체 주행 시간 초과', 40.0),
+    ('정렬', '정렬 시간 초과', 30.0),
+    ('접근', '전체 주행 시간 초과', 60.0),
+    ('재정렬 반복', '전체 주행 시간 초과', 60.0),
 ])
 def test_fresh_detections_cannot_extend_deadline(rig, kind, expected, limit):
     """검출이 계속되거나 재정렬을 반복해도 시도 시간을 연장하지 않는다."""
     def feed(now):
-        x = 250.0 if kind == '정렬' else 320.0
+        x = 250.0 if kind == '정렬' else 340.0
         if kind == '재정렬 반복' and int(now * 10) % 10 == 5:
             x = 250.0
         rig.node.obj_callback(detection(x=x))
@@ -171,7 +171,7 @@ def test_fresh_detections_cannot_extend_deadline(rig, kind, expected, limit):
     rig.clock.on_step = feed
     result = rig.run()
     assert not result.success and expected in result.message
-    assert rig.goal.state == '실패' and rig.clock.now <= limit + 0.1
+    assert rig.goal.state == '실패' and limit <= rig.clock.now <= limit + 0.1
     assert rig.velocities[-1][1:] == (0, 0)
     if kind == '재정렬 반복':
         assert sum('재정렬 시작' in log for log in rig.logs) > 2
@@ -182,7 +182,7 @@ def test_loss_without_reliable_direction_stops_before_failure(rig, mode):
     """대상이 중앙에 있었거나 검출 정보가 끊기거나 잘못되면 정지한다."""
     def feed(now):
         if now < 0.5:
-            x = 300.0 if now >= 0.3 and mode != '미검출' else 320.0
+            x = 320.0 if now >= 0.3 and mode != '미검출' else 340.0
             rig.node.obj_callback(detection(x=x))
         elif mode == '미검출':
             rig.node.obj_callback(detection(class_id=-1))
@@ -193,22 +193,47 @@ def test_loss_without_reliable_direction_stops_before_failure(rig, mode):
     result = rig.run()
     assert not result.success and '재탐지 시간 초과' in result.message
     assert any(v > 0 for _, v, _ in rig.velocities)
-    stop_by = 1.5 if mode == '수신 중단' else 0.5
+    stop_by = 2.5 if mode == '수신 중단' else 0.5
     assert all(v == w == 0 for t, v, w in rig.velocities if t >= stop_by)
     assert stop_by + 6.0 <= rig.clock.now <= stop_by + 6.1
 
 
-def test_one_message_cannot_complete_alignment(rig):
-    """같은 검출 하나를 반복해서 읽어 정렬 성공으로 처리하지 않는다."""
+def test_one_valid_message_starts_approach_until_it_expires(rig):
+    """중앙 검출 한 번으로 접근하고 2초 넘게 갱신이 없으면 정지한다."""
     def feed(now):
         if now == 0.1:
-            rig.node.obj_callback(detection(bottom=440.0))
+            rig.node.obj_callback(detection())
 
     rig.clock.on_step = feed
     result = rig.run()
+    assert not result.success and '재탐지 시간 초과' in result.message
+    assert any(v > 0 for t, v, _ in rig.velocities if 0.1 < t < 0.4)
+    assert any(v > 0 for t, v, _ in rig.velocities if 1.5 <= t <= 2.0)
+    assert all(v == w == 0 for t, v, w in rig.velocities if t > 2.1)
+    assert not any('마지막 수거 전진' in log for log in rig.logs)
+
+
+def test_one_close_detection_completes_final_motion_without_another_confirmation(rig):
+    """접근 기준을 한 번 확인하면 재검출을 기다리지 않고 마지막 전진을 한다."""
+    def feed(now):
+        rig.node.obj_callback(detection(
+            bottom=300.0 if now < 0.3 else 440.0,
+            class_id=0 if now <= 0.3 else -1))
+
+    rig.clock.on_step = feed
+    result = rig.run()
+    moving = [t for t, v, _ in rig.velocities if t >= 0.4 and v > 0]
+    assert result.success and rig.goal.state == '성공'
+    assert 3.9 <= rig.velocities[-1][0] - moving[0] <= 4.1
+    assert sum('마지막 수거 전진' in log for log in rig.logs) == 1
+
+
+def test_detection_from_before_this_attempt_cannot_start_motion(rig):
+    """완화된 정렬 조건에서도 이전 수거의 좌표만으로 움직이지 않는다."""
+    rig.node.obj_callback(detection(bottom=440.0))
+    result = rig.run()
     assert not result.success
-    assert not any(v or w for _, v, w in rig.velocities)
-    assert not any(log.startswith('정렬 완료:') for log in rig.logs)
+    assert all(v == w == 0 for _, v, w in rig.velocities)
 
 
 def test_brief_target_loss_can_resume_without_a_new_action(rig):
@@ -229,7 +254,7 @@ def test_brief_target_loss_can_resume_without_a_new_action(rig):
 @pytest.mark.parametrize('x,sign', [(260.0, 1), (440.0, -1)])
 def test_lost_target_search_uses_latest_visible_position(rig, x, sign):
     """2초 넘게 놓친 대상도 마지막 검출 위치 방향으로 회전해 다시 찾는다."""
-    rig.goal.request.target_x = 640.0 - x
+    rig.goal.request.target_x = 680.0 - x
     rig.goal.request.target_h = 80.0
 
     def feed(now):
@@ -250,13 +275,13 @@ def test_lost_target_search_uses_latest_visible_position(rig, x, sign):
     assert [enable for enable, _ in rig.requests] == [True, False]
 
 
-@pytest.mark.parametrize('x,sign', [(250.0, 1), (450.0, -1), (320.0, 0)])
+@pytest.mark.parametrize('x,sign', [(250.0, 1), (450.0, -1), (340.0, 0)])
 def test_initial_search_uses_current_goal_without_guessing_center_direction(rig, x, sign):
     """첫 검출 전에는 이번 요청의 위치를 쓰되 중앙이면 방향을 임의로 정하지 않는다."""
     rig.goal.request.target_x = x
     rig.goal.request.target_h = 80.0
     rig.clock.on_step = lambda now: rig.node.obj_callback(detection(
-        x=0.0 if now < 0.5 else 320.0, bottom=440.0,
+        x=0.0 if now < 0.5 else 340.0, bottom=440.0,
         class_id=-1 if now < 0.5 else 0))
     result = rig.run()
     searching = [(v, w) for t, v, w in rig.velocities if 0.1 <= t < 0.5]
@@ -272,7 +297,7 @@ def test_initial_search_uses_current_goal_without_guessing_center_direction(rig,
 def test_reacquisition_during_approach_requires_alignment_before_forward(rig):
     """접근 중 재탐지 회전 후에는 작은 오차도 정렬을 마친 뒤 전진한다."""
     def feed(now):
-        x = 300.0 if 0.3 <= now < 1.3 else 320.0
+        x = 320.0 if 0.3 <= now < 1.3 else 340.0
         rig.node.obj_callback(detection(
             x=x, bottom=440.0 if now >= 1.7 else 300.0,
             class_id=-1 if 0.5 <= now < 1.0 else 0))
@@ -281,8 +306,8 @@ def test_reacquisition_during_approach_requires_alignment_before_forward(rig):
     result = rig.run()
     assert any(v > 0 for t, v, _ in rig.velocities if t < 0.5)
     assert all(v == 0 and w > 0 for t, v, w in rig.velocities if 0.5 <= t < 1.3)
-    assert all(v == 0 for t, v, _ in rig.velocities if 1.3 <= t < 1.5)
-    assert any(v > 0 for t, v, _ in rig.velocities if 1.5 <= t < 1.7)
+    assert all(v == 0 for t, v, _ in rig.velocities if 1.3 <= t < 1.4)
+    assert any(v > 0 for t, v, _ in rig.velocities if 1.4 <= t < 1.7)
     assert result.success
 
 
@@ -312,7 +337,7 @@ def test_search_stops_when_detection_feed_becomes_unusable(rig, mode):
     rig.clock.on_step = feed
     result = rig.run()
     assert any(w > 0 for t, _, w in rig.velocities if 0.4 <= t < 0.8)
-    stop_by = 1.8 if mode == '수신 중단' else 0.8
+    stop_by = 2.8 if mode == '수신 중단' else 0.8
     assert all(v == w == 0 for t, v, w in rig.velocities if t >= stop_by)
     assert not result.success and 6.4 <= rig.clock.now <= 6.5
 
@@ -341,32 +366,70 @@ def test_cancel_during_search_prevents_later_motion_and_direction_reuse(rig):
 
 
 @pytest.mark.parametrize('kind,expected,limit', [
-    ('정렬', '정렬 시간 초과', 15.0),
-    ('접근', '전체 주행 시간 초과', 40.0),
+    ('정렬', '정렬 시간 초과', 30.0),
+    ('접근', '전체 주행 시간 초과', 60.0),
 ])
 def test_repeated_reacquisition_cannot_extend_deadlines(rig, kind, expected, limit):
     """재탐지에 반복 성공해도 진행 중인 정렬과 전체 수거 시간을 늘리지 않는다."""
     def feed(now):
         step = round(now * 10) % 10
-        x = 250.0 if kind == '정렬' else (300.0 if step in (2, 3) else 320.0)
+        x = 250.0 if kind == '정렬' else (320.0 if step in (2, 3) else 340.0)
         rig.node.obj_callback(detection(x=x, class_id=-1 if step in (4, 5, 6) else 0))
 
     rig.clock.on_step = feed
     result = rig.run()
     assert not result.success and expected in result.message
-    assert rig.clock.now <= limit + 0.1
+    assert limit <= rig.clock.now <= limit + 0.1
     assert sum('제자리 재탐지' in log for log in rig.logs) > 2
     assert rig.velocities[-1][1:] == (0, 0)
 
 
-def test_close_but_misaligned_target_must_realign_before_final_motion(rig):
-    """물체가 가까워도 마지막 전진 전에 좌우 정렬을 완료한다."""
+@pytest.mark.parametrize('x,success', [
+    (330.0, True), (350.0, True), (329.0, False), (351.0, False), (280.0, False),
+])
+def test_close_target_requires_alignment_before_final_motion(rig, x, success):
+    """수거 직전에는 중앙에서 10픽셀 이내일 때만 마지막 전진을 한다."""
     rig.clock.on_step = lambda now: rig.node.obj_callback(detection(
-        x=320.0 if now < 0.3 else 300.0, bottom=440.0))
+        x=340.0 if now < 0.3 else x,
+        bottom=300.0 if now < 0.3 else 440.0))
     result = rig.run()
-    assert not result.success and '정렬 시간 초과' in result.message
-    assert not any(v > 0 for _, v, _ in rig.velocities)
-    assert not any('마지막 수거 전진' in log for log in rig.logs)
+    assert result.success == success
+    if success:
+        assert any(v > 0 for t, v, _ in rig.velocities if t >= 0.4)
+        assert any('마지막 수거 전진' in log for log in rig.logs)
+        assert not any(log.startswith('재정렬 시작:') for log in rig.logs)
+    else:
+        assert '정렬 시간 초과' in result.message
+        assert all(v == 0 for t, v, _ in rig.velocities if t >= 0.3)
+        assert any(w * (340.0 - x) > 0 for t, _, w in rig.velocities if t >= 0.4)
+        assert not any('마지막 수거 전진' in log for log in rig.logs)
+
+
+@pytest.mark.parametrize('x', [320.0, 360.0])
+def test_close_target_realigns_and_one_centered_detection_resumes_final_motion(rig, x):
+    """수거 직전에는 정지해 재정렬하고 중앙 검출 한 번으로 마지막 전진을 한다."""
+    def feed(now):
+        if now < 0.3:
+            msg = detection()
+        elif now < 0.8:
+            msg = detection(x=x, bottom=440.0)
+        elif now == 0.8:
+            msg = detection(bottom=440.0)
+        elif now < 1.0:
+            return
+        else:
+            msg = detection(class_id=-1)
+        rig.node.obj_callback(msg)
+
+    rig.clock.on_step = feed
+    result = rig.run()
+    assert result.success
+    assert any(v > 0 for t, v, _ in rig.velocities if t < 0.3)
+    assert all(v == 0 for t, v, _ in rig.velocities if 0.3 <= t < 1.0)
+    assert any(w * (340.0 - x) > 0 for t, _, w in rig.velocities if 0.4 <= t < 0.8)
+    moving = [t for t, v, _ in rig.velocities if t >= 1.0 and v > 0]
+    assert moving and 3.9 <= rig.velocities[-1][0] - moving[0] <= 4.1
+    assert sum('마지막 수거 전진' in log for log in rig.logs) == 1
 
 
 def test_final_motion_runs_once_even_when_target_leaves_view(rig):
@@ -378,7 +441,7 @@ def test_final_motion_runs_once_even_when_target_leaves_view(rig):
     result = rig.run()
     moving = [t for t, v, _ in rig.velocities if v > 0]
     assert result.success
-    assert 2.9 <= rig.velocities[-1][0] - moving[0] <= 3.1
+    assert 3.9 <= rig.velocities[-1][0] - moving[0] <= 4.1
     assert sum('마지막 수거 전진' in log for log in rig.logs) == 1
 
 

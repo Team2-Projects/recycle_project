@@ -27,9 +27,9 @@ class RecycleTrackingNode(Node):
         defaults = {
             'align_tolerance_px': 10.0,
             'realign_threshold_px': 35.0,
-            'align_timeout_sec': 15.0,
-            'tracking_timeout_sec': 40.0,
-            'detection_timeout_sec': 1.0,
+            'align_timeout_sec': 30.0,
+            'tracking_timeout_sec': 60.0,
+            'detection_timeout_sec': 2.0,
             'target_lost_timeout_sec': 6.0,
             'tracking_service_timeout_sec': 3.0,
             'approach_steer_kp': 0.0004,
@@ -67,11 +67,12 @@ class RecycleTrackingNode(Node):
             f'수거 제어 설정: 정렬 완료 {self.align_tolerance_px:g}픽셀 이내, '
             f'재정렬 시작 {self.realign_threshold_px:g}픽셀 이상, '
             f'정렬 제한 {self.align_timeout_sec:g}초, '
+            f'검출 정보 유효 시간 {self.detection_timeout_sec:g}초, '
             f'재탐지 제한 {self.target_lost_timeout_sec:g}초, '
             f'전체 주행 제한 {self.tracking_timeout_sec:g}초')
 
     def obj_callback(self, msg):
-        """수신 시각과 번호를 함께 저장해 같은 검출 결과를 중복 집계하지 않는다."""
+        """수신 시각과 번호로 정보의 유효 시간과 이번 수거 이후의 검출을 구분한다."""
         with self._lock:
             self._observation = (msg, time.monotonic(), self._observation[2] + 1)
 
@@ -212,13 +213,12 @@ class RecycleTrackingNode(Node):
                 and msg.coord[2] > 0 and msg.coord[3] > 0)
 
     def _run_tracking(self, goal_handle, deadline):
-        # 가로 640픽셀 영상의 중앙을 정렬 기준으로 사용한다.
-        reference_x, stop_lower_y = 320.0, 430.0
+        # 영상에서 물체를 맞출 가로 좌표를 정렬 기준으로 사용한다.
+        reference_x, stop_lower_y = 340.0, 430.0
         forward_speed, align_speed = 0.10, 0.05
-        period, final_duration = 0.10, 3.0
+        period, final_duration = 0.10, 4.0
         phase = '정렬'
         align_deadline = time.monotonic() + self.align_timeout_sec
-        aligned_count, close_count = 0, 0
         lost_since, final_until = None, None
         lost_mode = None
         # 새 수거 요청에 담긴 검출 위치로 시작하고, 이후 유효한 검출로 갱신한다.
@@ -229,7 +229,6 @@ class RecycleTrackingNode(Node):
             last_error = reference_x - target.target_x
         with self._lock:
             start_sequence = self._observation[2]
-        seen_sequence = start_sequence
         self.get_logger().info('정렬 시작: 새 검출 결과를 기다립니다.')
 
         while rclpy.ok():
@@ -254,10 +253,7 @@ class RecycleTrackingNode(Node):
             with self._lock:
                 msg, received, sequence = self._observation
             fresh = sequence > start_sequence and now - received <= self.detection_timeout_sec
-            new_detection = sequence != seen_sequence
-            seen_sequence = sequence
             if not fresh or not self._valid_detection(msg):
-                aligned_count, close_count = 0, 0
                 if lost_since is None:
                     lost_since = now
                 if now - lost_since >= self.target_lost_timeout_sec:
@@ -292,30 +288,25 @@ class RecycleTrackingNode(Node):
             if phase == '정렬':
                 if abs(error) <= self.align_tolerance_px:
                     self._publish_velocity()
-                    if new_detection:
-                        aligned_count += 1
-                    if aligned_count >= 2:
-                        phase = '접근'
-                        self.get_logger().info(f'정렬 완료: 좌우 오차 {error:.1f}픽셀, 접근 시작')
+                    # 유효한 검출이 허용 범위에 한 번 들어오면 접근을 시작한다.
+                    phase = '접근'
+                    self.get_logger().info(f'정렬 완료: 좌우 오차 {error:.1f}픽셀, 접근 시작')
                 else:
-                    aligned_count = 0
                     self._publish_velocity(angular=math.copysign(align_speed, error))
             elif (abs(error) >= self.realign_threshold_px
                   or (lower_y >= stop_lower_y and abs(error) > self.align_tolerance_px)):
+                # 마지막 전진 전에는 작은 좌우 오차도 정지 후 다시 정렬한다.
                 self._publish_velocity()
                 phase = '정렬'
                 align_deadline = now + self.align_timeout_sec
-                aligned_count, close_count = 0, 0
                 self.get_logger().info(f'재정렬 시작: 좌우 오차 {error:.1f}픽셀, 전진 정지')
             elif lower_y >= stop_lower_y:
                 self._publish_velocity()
-                if new_detection:
-                    close_count += 1
-                if close_count >= 2:
-                    phase = '최종 전진'
-                    self.get_logger().info('접근 기준 도달: 마지막 수거 전진 3초 시작')
+                # 접근 기준에 도달하면 추가 검출을 기다리지 않고 마지막 전진을 한다.
+                phase = '최종 전진'
+                self.get_logger().info(
+                    f'접근 기준 도달: 마지막 수거 전진 {final_duration:g}초 시작')
             else:
-                close_count = 0
                 angular = 0.0
                 if abs(error) > self.align_tolerance_px:
                     angular = max(-self.approach_max_angular_speed, min(

@@ -63,10 +63,10 @@ class YoloNode(Node):
         return response
 
     def get_closest_to_center(self, boxes):
-        """화면 중앙(320)과 가장 가까운 물체의 인덱스를 반환"""
+        """가로 기준점(340)과 가장 가까운 물체의 인덱스를 반환"""
         centers_x = boxes.xywh[:, 0].tolist()
-        # 중앙(320)과의 절대 거리 계산
-        distances = [abs(x - 320) for x in centers_x]
+        # 가로 기준점(340)과의 절대 거리 계산
+        distances = [abs(x - 340) for x in centers_x]
         return distances.index(min(distances))
 
     def listener_callback(self, msg):
