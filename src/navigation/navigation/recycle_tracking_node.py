@@ -30,7 +30,7 @@ class RecycleTrackingNode(Node):
             'align_timeout_sec': 30.0,
             'tracking_timeout_sec': 60.0,
             'detection_timeout_sec': 2.0,
-            'target_lost_timeout_sec': 6.0,
+            'target_lost_timeout_sec': 10.0,
             'tracking_service_timeout_sec': 3.0,
             'approach_steer_kp': 0.0004,
             'approach_max_angular_speed': 0.06,

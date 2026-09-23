@@ -195,7 +195,8 @@ def test_loss_without_reliable_direction_stops_before_failure(rig, mode):
     assert any(v > 0 for _, v, _ in rig.velocities)
     stop_by = 2.5 if mode == '수신 중단' else 0.5
     assert all(v == w == 0 for t, v, w in rig.velocities if t >= stop_by)
-    assert stop_by + 6.0 <= rig.clock.now <= stop_by + 6.1
+    expected_end = stop_by + rig.node.target_lost_timeout_sec
+    assert expected_end <= rig.clock.now <= expected_end + 0.1
 
 
 def test_one_valid_message_starts_approach_until_it_expires(rig):
@@ -319,7 +320,8 @@ def test_search_rotation_times_out_and_stops(rig):
     assert not result.success and '재탐지 시간 초과' in result.message
     assert any(w < 0 for t, _, w in rig.velocities if t >= 0.4)
     assert all(v == 0 for _, v, _ in rig.velocities)
-    assert 6.4 <= rig.clock.now <= 6.5
+    expected_end = 0.4 + rig.node.target_lost_timeout_sec
+    assert expected_end <= rig.clock.now <= expected_end + 0.1
     assert rig.velocities[-1][1:] == (0, 0)
 
 
@@ -339,7 +341,8 @@ def test_search_stops_when_detection_feed_becomes_unusable(rig, mode):
     assert any(w > 0 for t, _, w in rig.velocities if 0.4 <= t < 0.8)
     stop_by = 2.8 if mode == '수신 중단' else 0.8
     assert all(v == w == 0 for t, v, w in rig.velocities if t >= stop_by)
-    assert not result.success and 6.4 <= rig.clock.now <= 6.5
+    expected_end = 0.4 + rig.node.target_lost_timeout_sec
+    assert not result.success and expected_end <= rig.clock.now <= expected_end + 0.1
 
 
 def test_cancel_during_search_prevents_later_motion_and_direction_reuse(rig):
@@ -511,23 +514,25 @@ def test_pending_cleanup_preserves_original_failure_and_stops_first(rig):
     assert not result.success
     assert '재탐지 시간 초과' in result.message
     assert '추적 모드 해제 미확인' in result.message
-    assert 9.0 <= rig.clock.now <= 9.1
+    expected_end = rig.node.target_lost_timeout_sec + rig.node.tracking_service_timeout_sec
+    assert expected_end <= rig.clock.now <= expected_end + 0.1
     assert all(v == w == 0 for _, v, w in rig.velocities)
     assert rig.node.goal_callback(None) == tracking.GoalResponse.REJECT
 
 
 @pytest.mark.parametrize('stop_reason', [None, 'STOP', 'BATTERY_LOW'])
-def test_autonav_failure_closes_servo_and_selects_patrol_or_home(monkeypatch, stop_reason):
-    """실패 시 서보를 정리하고 STOP 여부에 따라 순찰 또는 HOME을 선택한다."""
-    node = object.__new__(auto_nav.AutoNav)
+def test_autonav_failure_closes_servo_and_selects_patrol_or_home(unload_rig, stop_reason):
+    """실패 후 수락된 순찰에서는 즉시 새 수거를 허용하고 STOP이면 HOME으로 복귀한다."""
+    node = unload_rig.node
     actions = []
-    node.get_logger = lambda: SimpleNamespace(warn=lambda text: actions.append(('로그', text)))
+    node.get_logger = lambda: SimpleNamespace(
+        info=lambda text: actions.append(('로그', text)),
+        warn=lambda text: actions.append(('로그', text)))
     node.trigger_servo_movement = lambda a, b: actions.append(('서보', a, b))
     node.send_goal = lambda x, y: actions.append(('순찰', x, y))
     node.return_home_by_stop = lambda: actions.append(('HOME',))
     node.cancel_reason, node.stop_pending = stop_reason, False
     node.resume_x, node.resume_y, node.object_found = 1.2, 3.4, True
-    monkeypatch.setattr(auto_nav, 'time', SimpleNamespace(monotonic=lambda: 100.0))
     future = SimpleNamespace(result=lambda: SimpleNamespace(
         status=auto_nav.GoalStatus.STATUS_ABORTED,
         result=SimpleNamespace(success=False, message='정렬 시간 초과')))
@@ -537,4 +542,91 @@ def test_autonav_failure_closes_servo_and_selects_patrol_or_home(monkeypatch, st
         assert ('HOME',) in actions and not any(x[0] == '순찰' for x in actions)
     else:
         assert ('순찰', 1.2, 3.4) in actions
-        assert node.tracking_retry_after == 100.5 and not node.object_found
+        assert not node.object_found
+        node.object_callback(detection())
+        assert node.object_found and ('서보', -90, 90) in actions
+
+
+@pytest.fixture
+def unload_rig():
+    """검출부터 수거 성공과 하역 요청까지 ROS 통신 없이 실행한다."""
+    node = object.__new__(auto_nav.AutoNav)
+    requests, logs = [], []
+    node.get_logger = lambda: SimpleNamespace(info=logs.append, warn=logs.append)
+    node.collected_count, node.previous_object_id = 0, None
+    node._basket_votes = auto_nav.Counter()
+    node._basket_skips = auto_nav.Counter()
+    node._basket_deadline = node._basket_after_ns = node._basket_center = None
+    node._basket_last_stamp_ns = node._basket_last_received_ns = 0
+    node.basket_min_samples, node.basket_agreement_ratio, node.basket_settle_sec = 3, 0.8, 0.4
+    node.object_found, node.object_id = False, None
+    node.current_handle = SimpleNamespace(cancel_goal_async=lambda: Future())
+    node._nav_goal_pending, node._pending_detection = False, None
+    node.pending_detection_max_age_sec = 2.0
+    node.inference_control = SimpleNamespace(
+        ready=True, set_enabled=lambda enabled, on_enabled=None:
+        on_enabled() if on_enabled is not None else None)
+    node.is_returning_home = False
+    node.cancel_reason, node.stop_pending = None, False
+    node.current_idx, node.waypoints = 0, [(1.0, 2.0), (0.2, -1.5)]
+    node.home_x, node.home_y = 0.2, -1.5
+    node.publish_recycle_success = lambda *args: None
+    node.publish_object_found = lambda *args: None
+    node.selected_class_pub = SimpleNamespace(publish=lambda msg: None)
+    node.publish_robot_task = lambda *args: None
+    node.trigger_servo_movement = lambda *args: None
+    node.trigger_pantilt_movement = lambda *args: setattr(node, 'pantilt_future', Future())
+    node.cmd_vel_pub = SimpleNamespace(publish=lambda msg: None)
+    node.create_timer = lambda *args: SimpleNamespace(cancel=lambda: None)
+    node.destroy_timer = lambda timer: None
+    node.send_goal = lambda *args: None
+
+    def send_goal_async(goal):
+        requests.append(goal)
+        return Future()
+
+    node._recycle_client = SimpleNamespace(send_goal_async=send_goal_async)
+    completed = SimpleNamespace(result=lambda: SimpleNamespace(
+        status=auto_nav.GoalStatus.STATUS_SUCCEEDED,
+        result=SimpleNamespace(success=True, message='done')))
+    return SimpleNamespace(node=node, requests=requests, completed=completed)
+
+
+@pytest.mark.parametrize('collected_id', [0, 1, 2])
+@pytest.mark.parametrize('reason', ['수거함 포화', '순찰 종료'])
+def test_unload_keeps_collection_type_after_unrelated_detections(unload_rig, collected_id, reason):
+    """수거 중과 수거 후에 다른 종류가 보여도 하역 요청의 종류를 유지한다."""
+    node = unload_rig.node
+    node.object_callback(detection(class_id=collected_id))
+    other = detection(class_id=(collected_id + 1) % 3)
+    other.min_y = 100.0
+    node.object_callback(other)
+    node.recycle_tracking_result_callback(unload_rig.completed)
+    node.object_callback(other)
+    assert node.collected_count == 1
+    assert node.previous_object_id == collected_id
+
+    if reason == '수거함 포화':
+        node.check_recycle_condition_callback()
+    else:
+        node.current_idx = len(node.waypoints)
+        node.send_next_goal()
+
+    assert len(unload_rig.requests) == 1
+    assert unload_rig.requests[0].index == collected_id
+
+
+def test_unload_completion_allows_a_new_collection_type(unload_rig):
+    """하역이 끝나면 다음 수거의 종류로 새 하역 목적지를 선택한다."""
+    node = unload_rig.node
+    for collected_id in (0, 2):
+        node.object_callback(detection(class_id=collected_id))
+        node.recycle_tracking_result_callback(unload_rig.completed)
+        node.object_callback(detection(class_id=1))
+        node.current_idx = len(node.waypoints)
+        node.send_next_goal()
+        node.recycle_result_callback(unload_rig.completed)
+        assert node.collected_count == 0 and node.previous_object_id is None
+        assert not node.object_found
+
+    assert [request.index for request in unload_rig.requests] == [0, 2]
