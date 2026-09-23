@@ -553,6 +553,9 @@ def unload_rig():
     node = object.__new__(auto_nav.AutoNav)
     requests, logs = [], []
     node.get_logger = lambda: SimpleNamespace(info=logs.append, warn=logs.append)
+    node.get_clock = lambda: SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=100_000_000_000))
+    node.approach_min_samples, node.approach_mean_margin = 10, 0.05
+    node._reset_approach_classification()
     node.collected_count, node.previous_object_id = 0, None
     node._basket_votes = auto_nav.Counter()
     node._basket_skips = auto_nav.Counter()

@@ -551,7 +551,146 @@ def basket_observation(rig, name='paper', stamp_sec=None, x=320.0, camera_stamp_
 def feed_basket(rig, names):
     for name in names:
         rig.clock.now += 0.1
-        rig.node.basket_class_callback(basket_observation(rig, name))
+        rig.node.class_observation_callback(basket_observation(rig, name))
+
+
+def start_approach(rig, class_id=3):
+    rig.node.send_next_goal()
+    patrol = accept(rig.nav)
+    rig.node.object_callback(detection(class_id=class_id))
+    patrol.finish(auto_nav.GoalStatus.STATUS_CANCELED)
+    return accept(rig.tracking)
+
+
+def feed_approach(rig, name, score, count):
+    for _ in range(count):
+        rig.clock.now += 0.01
+        batch = basket_observation(rig, name)
+        batch.detections[0].results[0].hypothesis.score = score
+        rig.node.class_observation_callback(batch)
+
+
+def test_approach_mean_beats_majority_and_basket_cannot_overwrite_it(nav_rig):
+    rig = nav_rig
+    logger = Mock()
+    rig.node.get_logger = lambda: logger
+    pickup = start_approach(rig)
+    feed_approach(rig, 'trash', 0.630, 92)
+    feed_approach(rig, 'paper', 0.802, 47)
+    feed_approach(rig, 'can', 0.99, 1)  # 1회의 높은 점수는 후보가 될 수 없다.
+    assert selected_class(rig) == 3  # 10회를 채워도 수거 성공 전에는 임시 종류 유지
+    pickup.finish(auto_nav.GoalStatus.STATUS_SUCCEEDED, success=True)
+    assert selected_class(rig) == rig.node.previous_object_id == 1
+    assert rig.node._basket_deadline is None
+    rig.node.pantilt_future.set_result(SimpleNamespace(success=True))
+    feed_basket(rig, ['trash'] * 11)
+    rig.clock.now += 3.0
+    # 기존 적재량 판정은 계속 받아 하역을 연결해야 한다.
+    observation = detection(class_id=1)
+    observation.min_y = 100.0
+    rig.node.object_callback(observation)
+    rig.node.check_recycle_condition_callback()
+    assert rig.recycle.requests[-1][0].index == selected_class(rig) == 1
+    assert any('접근 분류 확정' in call.args[0] and 'paper=47/140회' in call.args[0]
+               and '평균 차이 0.172' in call.args[0] for call in logger.info.call_args_list)
+
+
+@pytest.mark.parametrize('paper_count,paper_score,trash_count,trash_score,confirmed', [
+    (10, 0.637, 10, 0.668, False),  # 충분히 관측했어도 평균 차이가 작다.
+    (10, 0.80, 10, 0.80, False),
+    (9, 0.90, 9, 0.60, False),
+    (10, 0.85, 10, 0.80, True),    # 차이 0.05 경계값
+    (10, 0.80, 9, 0.95, True),     # 최소 횟수를 충족한 클래스 하나
+])
+def test_approach_thresholds_choose_confirmation_or_basket(
+        nav_rig, paper_count, paper_score, trash_count, trash_score, confirmed):
+    rig = nav_rig
+    pickup = start_approach(rig, class_id=1)
+    feed_approach(rig, 'paper', paper_score, paper_count)
+    feed_approach(rig, 'trash', trash_score, trash_count)
+    pickup.finish(auto_nav.GoalStatus.STATUS_SUCCEEDED, success=True)
+    assert (rig.node._basket_deadline is None) == confirmed
+    rig.node.pantilt_future.set_result(SimpleNamespace(success=True))
+    rig.clock.now += 0.5
+    feed_basket(rig, ['trash'] * 3)
+    rig.clock.now += 3.0
+    rig.node.check_recycle_condition_callback()
+    assert selected_class(rig) == (1 if confirmed else 3)
+
+
+def test_approach_only_counts_fresh_unique_valid_frames_for_current_pickup(nav_rig):
+    rig = nav_rig
+    feed_approach(rig, 'paper', 0.99, 10)  # 발견 채택 전은 제외
+    start_approach(rig)
+    for kind in ('old', 'future', 'empty', 'person', 'nan', 'bad_box'):
+        rig.clock.now += 0.01
+        batch = basket_observation(rig)
+        if kind in ('old', 'future'):
+            batch.header.stamp.sec = 0 if kind == 'old' else 10000
+        elif kind == 'empty':
+            batch.detections = []
+        elif kind == 'person':
+            batch.detections[0].results[0].hypothesis.class_id = 'person'
+        elif kind == 'nan':
+            batch.detections[0].results[0].hypothesis.score = float('nan')
+        else:
+            batch.detections[0].bbox.size_x = 0.0
+        rig.node.class_observation_callback(batch)
+    assert not rig.node._approach_counts
+    # Pi 시각이 PC와 달라도 허용하되 같은 촬영 시각은 두 번 세지 않는다.
+    for camera_stamp in (500.0, 500.0, 499.0, 501.0, 0.0):
+        rig.clock.now += 0.01
+        batch = basket_observation(rig, camera_stamp_sec=camera_stamp)
+        rig.node.class_observation_callback(batch)
+        rig.node.class_observation_callback(batch)
+    assert dict(rig.node._approach_counts) == {1: 3}
+
+
+@pytest.mark.parametrize('ending', ['failure', 'STOP', 'BATTERY_LOW'])
+def test_approach_statistics_are_discarded_on_failure_or_stop(nav_rig, ending):
+    rig = nav_rig
+    pickup = start_approach(rig)
+    feed_approach(rig, 'paper', 0.95, 10)
+    if ending == 'failure':
+        pickup.finish(auto_nav.GoalStatus.STATUS_ABORTED)
+    else:
+        rig.node.command_callback(SimpleNamespace(data=ending))
+        pickup.finish(auto_nav.GoalStatus.STATUS_SUCCEEDED, success=True)
+    feed_approach(rig, 'paper', 0.95, 10)
+    assert not rig.node._approach_counts
+    assert rig.node._approach_after_ns is None
+    assert selected_class(rig) == -1
+    assert not rig.recycle.requests
+    if ending == 'failure':
+        resumed = accept(rig.nav)
+        rig.node.object_callback(detection())
+        resumed.finish(auto_nav.GoalStatus.STATUS_CANCELED)
+        retry = accept(rig.tracking)
+        retry.finish(auto_nav.GoalStatus.STATUS_SUCCEEDED, success=True)
+        assert rig.node._basket_deadline is not None  # 이전 10회로 확정하지 않는다.
+
+
+def test_later_pickup_does_not_change_existing_load_using_approach_means(nav_rig):
+    rig = nav_rig
+    rig.node.collected_count, rig.node.previous_object_id = 1, 3
+    pickup = start_approach(rig)
+    feed_approach(rig, 'paper', 0.99, 10)
+    pickup.finish(auto_nav.GoalStatus.STATUS_SUCCEEDED, success=True)
+    assert selected_class(rig) == 3
+    assert not rig.node._approach_counts
+    assert rig.node._basket_deadline is None
+
+
+@pytest.mark.parametrize('name,value', [
+    ('approach_min_samples', 0), ('approach_min_samples', 1.5),
+    ('approach_mean_margin', 0.0), ('approach_mean_margin', 1.01),
+    ('approach_mean_margin', float('nan')), ('approach_mean_margin', float('inf')),
+])
+def test_invalid_approach_settings_are_rejected(nav_rig, monkeypatch, name, value):
+    monkeypatch.setattr(auto_nav.Node, 'declare_parameter', lambda self, key, default:
+                        SimpleNamespace(value=value if key == name else default))
+    with pytest.raises(ValueError, match='접근 분류'):
+        auto_nav.AutoNav()
 
 
 @pytest.mark.parametrize('names,expected', [

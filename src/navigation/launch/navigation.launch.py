@@ -32,13 +32,21 @@ def generate_launch_description():
         package='navigation',
         executable='auto_nav',
         name='auto_nav',
-        parameters=[{'pending_detection_max_age_sec': ParameterValue(
-            LaunchConfiguration('pending_detection_max_age_sec'), value_type=float)}],
+        parameters=[{
+            name: ParameterValue(LaunchConfiguration(name), value_type=value_type)
+            for name, value_type in (
+                ('pending_detection_max_age_sec', float),
+                ('approach_min_samples', int), ('approach_mean_margin', float))
+        }],
         on_exit=Shutdown()
     )
 
     return LaunchDescription([
         pending_detection_age,
+        DeclareLaunchArgument('approach_min_samples', default_value='10',
+                              description='Minimum detections per class for approach classification'),
+        DeclareLaunchArgument('approach_mean_margin', default_value='0.05',
+                              description='Required difference between eligible mean confidence scores'),
         coverage,
         recycle,
         recycle_tracking_node,

@@ -33,6 +33,13 @@ class AutoNav(Node):
                 or self.pending_detection_max_age_sec <= 0):
             raise ValueError('pending_detection_max_age_sec는 0보다 큰 유한한 값이어야 합니다.')
 
+        self.approach_min_samples = self.declare_parameter('approach_min_samples', 10).value
+        self.approach_mean_margin = self.declare_parameter('approach_mean_margin', 0.05).value
+        if (not isinstance(self.approach_min_samples, int) or self.approach_min_samples < 1
+                or not 0.0 < self.approach_mean_margin <= 1.0):
+            raise ValueError('접근 분류: 최소 검출 수는 양의 정수, 평균 차이는 0 초과~1')
+        self._reset_approach_classification()
+
         self.basket_min_samples = self.declare_parameter('basket_min_samples', 3).value
         self.basket_agreement_ratio = self.declare_parameter('basket_agreement_ratio', 0.8).value
         self.basket_settle_sec = self.declare_parameter('basket_settle_sec', 0.4).value
@@ -133,7 +140,7 @@ class AutoNav(Node):
             10
         )
         self.create_subscription(
-            Detection2DArray, '/yolo/class_observation', self.basket_class_callback, 1)
+            Detection2DArray, '/yolo/class_observation', self.class_observation_callback, 1)
 
         self.command_sub = self.create_subscription(
             String,
@@ -214,6 +221,7 @@ class AutoNav(Node):
 
         self.publish_schedule_status("CANCEL")
         self._pending_detection = None
+        self._reset_approach_classification()
         self._basket_deadline = None
 
         if self.tracking_handle is not None:
@@ -237,6 +245,7 @@ class AutoNav(Node):
 
     def return_home_by_stop(self):
         self._pending_detection = None
+        self._reset_approach_classification()
         self._basket_deadline = None
         if self.collected_count == 0:
             self.publish_selected_class(None)
@@ -325,6 +334,8 @@ class AutoNav(Node):
 
         if self.collected_count == 0:
             self.previous_object_id = msg.id
+            self._reset_approach_classification()
+            self._approach_after_ns = self.get_clock().now().nanoseconds
             self.get_logger().info(f'🎯 Target Object ID set to: {self.previous_object_id}')
 
         self.publish_selected_class(self.previous_object_id)
@@ -400,6 +411,7 @@ class AutoNav(Node):
             self.resume_after_tracking_failure(result.message)
             return
 
+        approach_confirmed = self.collected_count == 0 and self._finish_approach_classification()
         self.get_logger().info("Successed tracking! Triggering servo & pantilt...")
         self.trigger_servo_movement(0, 0)
         self.trigger_pantilt_movement(90)
@@ -414,9 +426,73 @@ class AutoNav(Node):
         self._basket_skips.clear()
         self._basket_center = self._basket_after_ns = None
         self._basket_last_stamp_ns = self._basket_last_received_ns = 0
-        self._basket_deadline = time.monotonic() + 3.0 if self.collected_count == 1 else None
-        if self.collected_count == 1:
+        needs_basket = self.collected_count == 1 and not approach_confirmed
+        self._basket_deadline = time.monotonic() + 3.0 if needs_basket else None
+        if needs_basket:
             self.pantilt_future.add_done_callback(self._basket_tilt_done)
+
+    def _reset_approach_classification(self):
+        self._approach_counts, self._approach_scores = Counter(), Counter()
+        self._approach_after_ns = None
+        self._approach_last_received_ns = self._approach_last_stamp_ns = 0
+
+    def class_observation_callback(self, batch):
+        """첫 대상 채택부터 수거 성공까지 누적하고, 이후에는 필요할 때만 수거함을 센다."""
+        if self._approach_after_ns is None:
+            self.basket_class_callback(batch)
+            return
+        if (self.collected_count or not self.inference_control.ready or self.stop_pending
+                or self.cancel_reason in ('STOP', 'BATTERY_LOW') or self.is_returning_home):
+            return
+        received = batch.header.stamp.sec * 1_000_000_000 + batch.header.stamp.nanosec
+        if (not self._approach_after_ns < received <= self.get_clock().now().nanoseconds
+                or len(batch.detections) != 1 or len(batch.detections[0].results) != 1):
+            return
+        msg = batch.detections[0]
+        stamp = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+        if (received <= self._approach_last_received_ns
+                or (stamp > 0 and stamp <= self._approach_last_stamp_ns)):
+            return
+        hypothesis = msg.results[0].hypothesis
+        class_id, score = recyclable_id.get(hypothesis.class_id), hypothesis.score
+        bbox = msg.bbox
+        if (class_id is None or not 0.0 < score <= 1.0
+                or not all(math.isfinite(v) for v in (bbox.center.position.x,
+                    bbox.center.position.y, bbox.size_x, bbox.size_y))
+                or min(bbox.size_x, bbox.size_y) <= 0):
+            return
+        self._approach_last_received_ns = received
+        self._approach_last_stamp_ns = max(self._approach_last_stamp_ns, stamp)
+        self._approach_counts[class_id] += 1
+        self._approach_scores[class_id] += score
+
+    def _finish_approach_classification(self):
+        """충분히 관측한 클래스의 평균을 비교하되, 차이가 작으면 수거함에 판단을 맡긴다."""
+        if self._approach_after_ns is None:
+            return False
+        self._approach_after_ns = None
+        counts = self._approach_counts
+        total = sum(counts.values())
+        means = {key: self._approach_scores[key] / count for key, count in counts.items()}
+        summary = ', '.join(
+            f'{object_name[key]}={count}/{total}회({count / total:.1%}, 평균 {means[key]:.3f})'
+            for key, count in sorted(counts.items())) or '유효 검출 없음'
+        ranked = sorted((means[key], key) for key, count in counts.items()
+                        if count >= self.approach_min_samples)
+        gap = ranked[-1][0] - ranked[-2][0] if len(ranked) > 1 else None
+        if ranked and (gap is None or gap + 1e-12 >= self.approach_mean_margin):
+            class_id = ranked[-1][1]
+            old_name = object_name.get(self.previous_object_id, '-')
+            self.previous_object_id = class_id
+            self.publish_selected_class(class_id)
+            comparison = '충족 클래스 1개' if gap is None else f'평균 차이 {gap:.3f}'
+            self.get_logger().info(
+                f'접근 분류 확정: {old_name} → {object_name[class_id]} '
+                f'({comparison}; {summary}); 수거함 재분류 생략')
+            return True
+        reason = '검출 수 부족' if not ranked else f'평균 차이 {gap:.3f} < {self.approach_mean_margin:.3f}'
+        self.get_logger().info(f'접근 분류 보류: {reason}; {summary}; 수거함 확인으로 판단')
+        return False
 
     def _basket_tilt_done(self, future):
         """틸트 성공 응답 뒤 안정화 시간을 두고, 이후 PC에서 받은 영상으로 재확인한다."""
@@ -500,6 +576,7 @@ class AutoNav(Node):
         self.get_logger().warn(f'수거 중단: {reason}')
         self.trigger_servo_movement(0, 0)
         self._pending_detection = None
+        self._reset_approach_classification()
         if self.cancel_reason in ("STOP", "BATTERY_LOW") or self.stop_pending:
             self.stop_pending = False
             self.return_home_by_stop()
@@ -546,7 +623,7 @@ class AutoNav(Node):
         self._clear_detection_state()
         self.inference_control.set_enabled(False)
         goal_msg = RecycleActionMsg.Goal()
-        # 첫 물체의 수거함 재확인을 반영한 채택 종류로 하역한다.
+        # 첫 물체의 접근 분류 또는 수거함 재확인으로 채택한 종류로 하역한다.
         goal_msg.index = self.previous_object_id if self.previous_object_id is not None else 1
         goal_msg.current_idx = self.current_idx
         goal_msg.home_x = self.home_x
@@ -564,6 +641,7 @@ class AutoNav(Node):
 
     def _clear_detection_state(self):
         self._pending_detection = None
+        self._reset_approach_classification()
         self._basket_deadline = None
         self.target_x = self.target_y = self.target_h = None
         self.object_id = None
