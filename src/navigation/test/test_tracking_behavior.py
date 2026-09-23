@@ -566,6 +566,7 @@ def unload_rig():
     node.current_handle = SimpleNamespace(cancel_goal_async=lambda: Future())
     node._nav_goal_pending, node._pending_detection = False, None
     node.pending_detection_max_age_sec = 2.0
+    node.home_return_start_index = 5
     node.inference_control = SimpleNamespace(
         ready=True, set_enabled=lambda enabled, on_enabled=None:
         on_enabled() if on_enabled is not None else None)

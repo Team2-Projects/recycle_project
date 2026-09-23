@@ -415,6 +415,99 @@ def test_nonfull_basket_returns_to_patrol_without_pausing_inference(nav_rig):
     assert all(enabled for enabled, _ in rig.inference.requests)
 
 
+def full_patrol(rig):
+    rig.node.waypoints = [(float(index), 1.0) for index in range(6)] + [(0.0, 0.0)]
+    rig.node.current_idx = 4
+    rig.node.send_next_goal()
+    return accept(rig.nav)
+
+
+def test_detection_on_the_way_to_point_four_still_starts_pickup(nav_rig):
+    patrol = full_patrol(nav_rig)
+    nav_rig.node.object_callback(detection())
+    patrol.cancel_goal_async.assert_called_once()
+    patrol.finish(auto_nav.GoalStatus.STATUS_CANCELED)
+    assert len(nav_rig.tracking.requests) == 1
+    assert nav_rig.node.inference_control.enabled
+
+
+@pytest.mark.parametrize('service_state', ['ready', 'delayed', 'unavailable'])
+def test_point_four_to_five_and_home_ignores_detection_without_waiting_for_off(
+        nav_rig, monkeypatch, service_state):
+    """4번 도착 직후 차단하고, 중지 응답과 무관하게 5번을 거쳐 HOME까지 이동한다."""
+    rig = nav_rig
+    shutdown = Mock()
+    monkeypatch.setattr(auto_nav.rclpy, 'ok', lambda: True)
+    monkeypatch.setattr(auto_nav.rclpy, 'shutdown', shutdown)
+    patrol = full_patrol(rig)
+    assert rig.node.inference_control.ready
+    rig.inference.auto_respond = service_state != 'delayed'
+    rig.inference.available = service_state != 'unavailable'
+    patrol.finish(auto_nav.GoalStatus.STATUS_SUCCEEDED)
+
+    for expected in ((5.0, 1.0), (0.0, 0.0)):
+        shutdown.assert_not_called()
+        assert not rig.node.inference_control.enabled
+        position = rig.nav.requests[-1][0].pose.pose.position
+        assert (position.x, position.y) == expected
+        rig.node.object_callback(detection())  # 이동 요청 수락 전의 늦은 검출
+        assert rig.node._pending_detection is None
+        returning = accept(rig.nav)
+        rig.node.object_callback(detection())  # 이동 중의 늦은 검출
+        assert rig.node.target_x is None
+        returning.cancel_goal_async.assert_not_called()
+        returning.finish(auto_nav.GoalStatus.STATUS_SUCCEEDED)
+
+    shutdown.assert_called_once()
+    assert len(rig.nav.requests) == 3
+    assert not rig.tracking.requests and not rig.recycle.requests
+    rig.servo.call_async.assert_not_called()
+
+
+@pytest.mark.parametrize('status', [auto_nav.GoalStatus.STATUS_ABORTED,
+                                  auto_nav.GoalStatus.STATUS_CANCELED])
+def test_return_waypoint_retry_keeps_inference_paused(nav_rig, status):
+    rig = nav_rig
+    full_patrol(rig).finish(auto_nav.GoalStatus.STATUS_SUCCEEDED)
+    accept(rig.nav).finish(status)
+    assert not rig.node.inference_control.enabled
+    assert rig.node.current_idx == 5
+    returning = accept(rig.nav)
+    rig.node.object_callback(detection())
+    returning.cancel_goal_async.assert_not_called()
+    assert not rig.tracking.requests
+
+
+def test_short_selected_path_keeps_patrol_detection_and_pauses_for_home(nav_rig):
+    rig = nav_rig
+    rig.node.current_idx = 1
+    rig.node.send_next_goal()
+    assert rig.node.inference_control.ready
+    accept(rig.nav).finish(auto_nav.GoalStatus.STATUS_SUCCEEDED)
+    assert rig.node.current_idx == 2  # 짧은 선택 경로에서도 마지막 HOME은 중지 대상
+    assert not rig.node.inference_control.enabled
+    returning = accept(rig.nav)
+    rig.node.object_callback(detection())
+    returning.cancel_goal_async.assert_not_called()
+
+
+def test_home_arrival_with_load_unloads_and_reenables_patrol(nav_rig):
+    rig = nav_rig
+    rig.node.collected_count, rig.node.previous_object_id = 1, 3
+    full_patrol(rig).finish(auto_nav.GoalStatus.STATUS_SUCCEEDED)
+    accept(rig.nav).finish(auto_nav.GoalStatus.STATUS_SUCCEEDED)  # 5번
+    accept(rig.nav).finish(auto_nav.GoalStatus.STATUS_SUCCEEDED)  # HOME
+    assert rig.recycle.requests[-1][0].index == 3
+    assert not rig.node.inference_control.enabled
+    accept(rig.recycle).finish(auto_nav.GoalStatus.STATUS_SUCCEEDED, success=True)
+    assert rig.node.current_idx == 0
+    assert rig.node.inference_control.ready
+    assert not rig.node.object_found
+    patrol = accept(rig.nav)
+    rig.node.object_callback(detection(class_id=1))
+    patrol.cancel_goal_async.assert_called_once()
+
+
 def test_unload_waits_for_on_ack_before_sending_patrol(nav_rig):
     rig = nav_rig
     handle = start_unload(rig)
@@ -474,7 +567,7 @@ def test_stop_during_unload_or_resume_never_restarts_patrol(nav_rig, phase, comm
             rig.node.command_callback(SimpleNamespace(data=command))
             handle.finish(auto_nav.GoalStatus.STATUS_CANCELED)
     assert rig.node.is_returning_home
-    assert rig.node.inference_control.enabled
+    assert not rig.node.inference_control.enabled
     assert len(rig.nav.requests) == 1
     position = rig.nav.requests[0][0].pose.pose.position
     assert (position.x, position.y) == (0.0, 0.0)

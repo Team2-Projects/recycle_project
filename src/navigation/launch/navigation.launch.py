@@ -36,6 +36,7 @@ def generate_launch_description():
             name: ParameterValue(LaunchConfiguration(name), value_type=value_type)
             for name, value_type in (
                 ('pending_detection_max_age_sec', float),
+                ('home_return_start_index', int),
                 ('approach_min_samples', int), ('approach_mean_margin', float))
         }],
         on_exit=Shutdown()
@@ -43,6 +44,8 @@ def generate_launch_description():
 
     return LaunchDescription([
         pending_detection_age,
+        DeclareLaunchArgument('home_return_start_index', default_value='5',
+                              description='Zero-based route index where return-home inference pause begins'),
         DeclareLaunchArgument('approach_min_samples', default_value='10',
                               description='Minimum detections per class for approach classification'),
         DeclareLaunchArgument('approach_mean_margin', default_value='0.05',

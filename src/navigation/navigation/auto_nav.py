@@ -33,6 +33,10 @@ class AutoNav(Node):
                 or self.pending_detection_max_age_sec <= 0):
             raise ValueError('pending_detection_max_age_sec는 0보다 큰 유한한 값이어야 합니다.')
 
+        self.home_return_start_index = self.declare_parameter('home_return_start_index', 5).value
+        if not isinstance(self.home_return_start_index, int) or self.home_return_start_index < 0:
+            raise ValueError('home_return_start_index는 0 이상의 정수여야 합니다.')
+
         self.approach_min_samples = self.declare_parameter('approach_min_samples', 10).value
         self.approach_mean_margin = self.declare_parameter('approach_mean_margin', 0.05).value
         if (not isinstance(self.approach_min_samples, int) or self.approach_min_samples < 1
@@ -250,7 +254,7 @@ class AutoNav(Node):
         if self.collected_count == 0:
             self.publish_selected_class(None)
         # 대기 중이던 순찰 재개 콜백도 제거한다. HOME 이동에는 검출이 필요 없다.
-        self.inference_control.set_enabled(True)
+        self.inference_control.set_enabled(False)
         if self.cancel_reason == "STOP":
             self.publish_robot_task('USER_COMMAND', '사용자 명령', '순찰 종료', 'Task')
         elif self.cancel_reason == "BATTERY_LOW":
@@ -744,8 +748,14 @@ class AutoNav(Node):
             return
 
         x, y = self.waypoints[self.current_idx]
-        if self.current_idx > len(self.waypoints) - 2:
+        # 기본 경로는 0~4번까지 순찰하고, 5번과 HOME은 복귀 구간이다.
+        # 선택 경로가 더 짧으면 마지막 HOME 목표에서 추론을 중지한다.
+        if self.current_idx >= min(self.home_return_start_index, len(self.waypoints) - 1):
+            if self.inference_control.enabled:
+                self.get_logger().info('순찰 종료 구간 진입: HOME 복귀 동안 YOLO 추론 중지')
             self.object_found = True
+            self._clear_detection_state()
+            self.inference_control.set_enabled(False)
         self.send_goal(x, y)
 
     def send_goal(self, x, y):
