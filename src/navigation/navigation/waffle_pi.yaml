@@ -127,6 +127,9 @@ controller_server:
       # 최대 후진 속도
       max_vel_x_backwards: 0.01
 
+      # 후진 속도 제한보다 작은 최적화 여유값
+      penalty_epsilon: 0.005
+
       # 최대 회전 속도(rad/s)
       max_vel_theta: 0.5
 
