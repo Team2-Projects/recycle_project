@@ -5,21 +5,26 @@ from ament_index_python.packages import get_package_share_directory
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage
+from std_msgs.msg import Int32
+from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 
 from ultralytics import YOLO
 
 import cv2
 import numpy as np
 import time
+import math
 import openvino as ov
 
 from my_yolo_msgs.msg import DetectedObject
 from my_yolo_msgs.srv import SetTracking
+from std_srvs.srv import SetBool
 
 from rclpy.qos import (
     QoSProfile,
     ReliabilityPolicy,
-    HistoryPolicy
+    HistoryPolicy,
+    DurabilityPolicy
 )
 from PIL import Image
 
@@ -36,6 +41,7 @@ object_id = {
     'trash': 3,
     'person': 4
 }
+object_name = {value: key for key, value in object_id.items()}
 
 
 class YoloNode(Node):
@@ -45,6 +51,15 @@ class YoloNode(Node):
 
         self.frame_count = 0
         self.is_tracking = False
+        self.inference_enabled = True
+        self._pause_deadline = None
+        self._image_generation = 0
+        self.inference_pause_timeout_sec = float(self.declare_parameter(
+            'inference_pause_timeout_sec', 5.0).value)
+        self.paused_image_hz = float(self.declare_parameter('paused_image_hz', 5.0).value)
+        for name in ('inference_pause_timeout_sec', 'paused_image_hz'):
+            if not math.isfinite(getattr(self, name)) or getattr(self, name) <= 0:
+                raise ValueError(f'{name}: 0보다 큰 유한한 값이 필요합니다.')
 
         # YOLO confidence threshold
         self.declare_parameter('conf_threshold', 0.50)
@@ -74,12 +89,14 @@ class YoloNode(Node):
         self.output_layer = self.compiled_classify_model.output(0)
 
         # 이미지 구독
-        self.subscription = self.create_subscription(
-            CompressedImage,
-            '/image_raw/compressed',
-            self.listener_callback,
-            10
-        )
+        self.subscription = self._subscribe_images()
+
+        # 채택 종류는 navigation에서만 결정하며, 화면 비교에만 사용한다.
+        self.selected_class_id = -1
+        self.selected_class_subscription = self.create_subscription(
+            Int32, '/selected_recycle_class', self.selected_class_callback,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
         # 객체 정보 발행
         self.publisher_ = self.create_publisher(
@@ -87,6 +104,9 @@ class YoloNode(Node):
             '/classified_detected_object_info',
             10
         )
+        # 연속 검출 필터 전의 관측: 접근 평균과 수거함 재분류에 클래스 변경도 전달한다.
+        self.class_observation_pub = self.create_publisher(
+            Detection2DArray, '/yolo/class_observation', 1)
 
         # 추적 모드 서비스
         self.srv = self.create_service(
@@ -94,6 +114,9 @@ class YoloNode(Node):
             'set_tracking_mode',
             self.srv_callback
         )
+        self.inference_srv = self.create_service(
+            SetBool, 'set_inference_enabled', self.inference_callback)
+        self.inference_watchdog = self.create_timer(0.5, self._check_pause_timeout)
 
         self.target_idx = 0
         self.pred_class = 0
@@ -112,13 +135,13 @@ class YoloNode(Node):
         self.same_object_count = 0
 
         # 총 x프레임 동안 유지되어야 함
-        self.required_frames = 2
+        self.required_frames = 1
 
         # 최초 객체 중심으로부터 허용 거리
         self.center_distance_threshold = 50.0
 
-        # 웹 이미지 발행 시간
-        self.last_image_publish_time = 0.0
+        # 웹과 로컬 화면이 공유할 영상의 발행 시간
+        self.last_image_publish_time = None
 
         image_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -132,6 +155,71 @@ class YoloNode(Node):
             image_qos
         )
         self.last_detection_log_time = 0.0
+
+    def selected_class_callback(self, msg):
+        """새 검출로 채택 값을 덮어쓰지 않고 navigation의 선택·해제만 반영한다."""
+        self.selected_class_id = msg.data if msg.data in object_name else -1
+
+    def _subscribe_images(self):
+        """최신 영상만 처리하고 모드 전환 전에 대기하던 콜백은 폐기한다."""
+        generation = self._image_generation
+
+        def callback(msg):
+            if generation == self._image_generation:
+                self.listener_callback(msg)
+
+        return self.create_subscription(
+            CompressedImage, '/image_raw/compressed', callback,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+
+    def _set_inference_enabled(self, enabled):
+        if self.inference_enabled == enabled:
+            return
+        self.inference_enabled = enabled
+        self.reset_tracking()
+        self.last_image_publish_time = None
+        # 전환 이전의 검출과 카메라 수신 큐를 다음 탐색에 재사용하지 않는다.
+        self._image_generation += 1
+        self.destroy_subscription(self.subscription)
+        self.subscription = self._subscribe_images()
+        empty = DetectedObject()
+        empty.id = -1
+        self.publisher_.publish(empty)
+        self.get_logger().info(f'분류·YOLO 추론 {"ON" if enabled else "OFF"}')
+
+    def inference_callback(self, request, response):
+        """OFF는 주기적으로 갱신해야 유지되며 활성 추적보다 우선하지 않는다."""
+        if not request.data and self.is_tracking:
+            response.success = False
+            response.message = '추적 중에는 추론을 중지할 수 없습니다.'
+            return response
+        self._pause_deadline = (
+            None if request.data else time.monotonic() + self.inference_pause_timeout_sec)
+        self._set_inference_enabled(request.data)
+        response.success = True
+        response.message = 'enabled' if request.data else 'paused'
+        return response
+
+    def _check_pause_timeout(self):
+        """네비게이션 종료·연결 단절 뒤 영구 중지 상태가 남지 않게 한다."""
+        if self._pause_deadline is not None and time.monotonic() >= self._pause_deadline:
+            self._pause_deadline = None
+            self.get_logger().warning('추론 중지 갱신이 끊겨 분류·YOLO 추론을 재개합니다.')
+            self._set_inference_enabled(True)
+
+    def publish_paused_image(self, msg):
+        """모델과 전처리는 건너뛰고 낮은 빈도로 PAUSED 카메라 화면만 보낸다."""
+        now = time.monotonic()
+        if (self.last_image_publish_time is not None
+                and now - self.last_image_publish_time < 1.0 / self.paused_image_hz):
+            return
+        try:
+            frame = cv2.imdecode(np.frombuffer(msg.data, np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                return
+            self.publish_image(frame, msg.header, None, None, False)
+        except cv2.error as exc:
+            self.get_logger().warning(f'중지 중 영상 생성 실패: {exc}')
 
     # =====================================
     # 객체 안정성 정보 초기화
@@ -221,34 +309,106 @@ class YoloNode(Node):
 
 
     # =====================================
-    # 웹용 이미지 발행
+    # 추론 결과를 웹과 로컬 화면에 함께 발행
     # =====================================
 
-    def publish_image(self, frame):
-
-        now = time.time()
-
-        # 0.2초마다 이미지 발행
-        if now - self.last_image_publish_time < 0.2:
+    def publish_image(self, frame, header, result, selected_idx, accepted):
+        """제어에 사용한 프레임과 결과를 그려 최대 5Hz로 발행한다."""
+        now = time.monotonic()
+        if (self.last_image_publish_time is not None
+                and now - self.last_image_publish_time < 0.2):
             return
-
         self.last_image_publish_time = now
 
-        success, encoded = cv2.imencode(
-            '.jpg',
-            frame,
-            [cv2.IMWRITE_JPEG_QUALITY, 70]
-        )
+        # 표시하지 않을 프레임은 그리기와 JPEG 압축도 생략한다.
+        try:
+            self._draw_detections(frame, result, selected_idx, accepted)
+            success, encoded = cv2.imencode(
+                '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if not success:
+                return
+            msg = CompressedImage()
+            msg.header = header
+            msg.format = 'jpeg'
+            msg.data = encoded.tobytes()
+            self.image_pub.publish(msg)
+        except cv2.error as exc:
+            # 화면 처리 오류가 다음 프레임의 제어용 검출까지 중단하지 않게 한다.
+            self.get_logger().warning(f'검출 영상 생성 실패: {exc}')
 
-        if not success:
+    @staticmethod
+    def _draw_text(frame, text, origin, scale, thickness=2):
+        """배경을 가리지 않고 노란 글자와 얇은 검정 외곽선으로 대비를 확보한다."""
+        for color, stroke in (((0, 0, 0), thickness + 2), ((0, 255, 255), thickness)):
+            cv2.putText(frame, text, origin, cv2.FONT_HERSHEY_SIMPLEX,
+                        scale, color, stroke, lineType=cv2.LINE_AA)
+
+    @staticmethod
+    def _draw_box_label(frame, text, origin, thickness):
+        """글자 크기는 유지하고 외곽선까지 영상 안에 들어오도록 배치한다."""
+        scale = 0.5
+        (text_width, text_height), baseline = cv2.getTextSize(
+            text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness + 2)
+        height, width = frame.shape[:2]
+        x = max(3, min(origin[0], width - text_width - 4))
+        y = max(text_height + 3, min(origin[1], height - baseline - 4))
+        YoloNode._draw_text(frame, text, (x, y), scale, thickness)
+
+    def _draw_status(self, frame, status, detected_name=None, confidence=None):
+        """박스 위치와 관계없이 화면 상단에 현재 검출과 채택 종류를 나란히 표시."""
+        selected_name = object_name.get(self.selected_class_id)
+        detected = '-' if detected_name is None else f'{detected_name.upper()} {confidence:.2f}'
+        selected = '-' if selected_name is None else selected_name.upper()
+        mismatch = (detected_name is not None and selected_name is not None
+                    and detected_name != selected_name)
+        self._draw_text(frame, status + (' | CLASS DIFF' if mismatch else ''), (10, 25), 0.6)
+        self._draw_text(frame, f'DETECTED: {detected} | SELECTED: {selected}', (10, 49), 0.6)
+
+    def _draw_detections(self, frame, result, selected_idx, accepted):
+        """같은 추론 결과에서 선택된 대상의 박스와 라벨만 하나씩 표시한다."""
+        if not self.inference_enabled:
+            self._draw_status(frame, 'PAUSED | Inference off')
+            return
+        detected_name, confidence = None, None
+        if result is not None and selected_idx is not None and len(result.boxes) > 0:
+            detected_name = result.names[int(result.boxes.cls[selected_idx].item())]
+            confidence = float(result.boxes.conf[selected_idx].item())
+        mode = 'TRACKING' if self.is_tracking else 'SEARCH'
+        if result is None:
+            status = 'Background'
+        elif len(result.boxes) == 0:
+            status = 'No detection'
+        elif accepted:
+            status = 'Valid detection'
+        elif detected_name in object_id:
+            status = f'Confirming {self.same_object_count}/{self.required_frames}'
+        else:
+            status = 'Unsupported class'
+
+        if result is None:
+            self._draw_status(frame, f'{mode} | {status}')
             return
 
-        msg = CompressedImage()
-
-        msg.format = 'jpeg'
-        msg.data = encoded.tobytes()
-
-        self.image_pub.publish(msg)
+        if detected_name is not None:
+            height, width = frame.shape[:2]
+            thickness = 2
+            if accepted:
+                color, prefix = (0, 255, 0), 'TARGET '
+            elif detected_name in object_id:
+                color, prefix = (0, 255, 255), 'PENDING '
+            else:
+                color, prefix = (160, 160, 160), 'UNSUPPORTED '
+            x, y, w, h = result.boxes.xywh[selected_idx].tolist()
+            left = max(0, min(width - 1, int(x - w / 2)))
+            top = max(0, min(height - 1, int(y - h / 2)))
+            right = max(0, min(width - 1, int(x + w / 2)))
+            bottom = max(0, min(height - 1, int(y + h / 2)))
+            cv2.rectangle(frame, (left, top), (right, bottom), color, thickness,
+                          lineType=cv2.LINE_AA)
+            self._draw_box_label(frame, f'{prefix}{detected_name} {confidence:.2f}',
+                                 (left, max(80, top - 8)), thickness)
+        # 상단은 마지막에 그려 박스가 상태 문구를 덮지 않게 한다.
+        self._draw_status(frame, f'{mode} | {status}', detected_name, confidence)
 
 
     # =====================================
@@ -257,6 +417,12 @@ class YoloNode(Node):
 
     def srv_callback(self, request, response):
 
+        if request.enable:
+            self._pause_deadline = None
+            self._set_inference_enabled(True)
+        # 모드 전환 전의 감지 횟수를 다음 최초 탐색에 재사용하지 않는다.
+        if self.is_tracking != request.enable:
+            self.reset_tracking()
         self.is_tracking = request.enable
 
         self.get_logger().info(
@@ -292,7 +458,13 @@ class YoloNode(Node):
 
     def listener_callback(self, msg):
 
-  
+        if not self.inference_enabled:
+            self.publish_paused_image(msg)
+            return
+
+        # Pi 촬영 시각과 분리한 PC 수신 시각. 추론을 시작하기 전에 기록한다.
+        received_at = self.get_clock().now().to_msg()
+
         # YOLO confidence
         conf_val = (
             self.get_parameter('conf_threshold')
@@ -313,57 +485,31 @@ class YoloNode(Node):
 
         # 발행할 메시지
         msg_data = DetectedObject()
+        res, selected_idx = None, None
 
         # =====================================
-        # 1단계: 분류 모델
+        # 최초 탐색에만 사전 분류를 적용하고, 추적 중에는 YOLO를 바로 실행한다.
         # =====================================
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        if not self.is_tracking:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_classify = Image.fromarray(frame_rgb).resize((640, 480))
 
-        frame_classify = Image.fromarray(frame_rgb)
+            # YOLO 방식으로 위/아래 80 pixel씩 padding
+            canvas = Image.new("RGB", (640, 640), (114, 114, 114))
+            canvas.paste(frame_classify, (0, 80))
+            frame_classify = np.array(canvas, dtype=np.float32)
+            frame_classify /= 255.0
+            frame_classify = np.transpose(frame_classify, (2, 0, 1))
+            frame_classify = np.expand_dims(frame_classify, axis=0)
 
-        frame_classify  = frame_classify.resize((640, 480))
-                   
-                    # ========================================================
-                    # YOLO 방식 Padding
-                    # ========================================================
-                   
-        canvas = Image.new(
-                        "RGB",
-                        (640, 640),
-                        (114, 114, 114)
-                    )
-                   
-                    # 위/아래 80 pixel씩 padding
-        canvas.paste(
-                        frame_classify ,
-                        (0, 80)
-                    )
-                   
-        frame_classify  = canvas
-                   
-        frame_classify  = np.array(
-                        frame_classify ,
-                        dtype=np.float32
-                    )
-                   
-        frame_classify  /= 255.0
-        frame_classify  = np.transpose(frame_classify , (2, 0, 1))
-        frame_classify  = np.expand_dims(frame_classify , axis=0)
-
-
-
-
-        result = self.compiled_classify_model([frame_classify])[self.output_layer]
-
-        self.pred_class = np.argmax(
-            result[0]
-        )
+            result = self.compiled_classify_model([frame_classify])[self.output_layer]
+            self.pred_class = np.argmax(result[0])
 
         # =====================================
         # Background
         # =====================================
 
-        if self.pred_class == 0:
+        if not self.is_tracking and self.pred_class == 0:
 
             now = time.time()
 
@@ -390,15 +536,15 @@ class YoloNode(Node):
             self.reset_tracking()
 
         # =====================================
-        # Object 존재 → YOLO 실행
+        # 추적 중이거나 사전 분류에서 Object 판정 → YOLO 실행
         # =====================================
 
-        elif self.pred_class == 1:
+        elif self.is_tracking or self.pred_class == 1:
    
 
             now = time.time()
 
-            if now - self.last_detection_log_time >= 2.0:
+            if not self.is_tracking and now - self.last_detection_log_time >= 2.0:
 
                 self.get_logger().info(
                     f'물체를 발견하였습니다. result[0]: {result[0]}'
@@ -458,6 +604,8 @@ class YoloNode(Node):
                         )
                     )
 
+                selected_idx = self.target_idx
+
                 # 선택된 객체 정보
                 best_cls_id = int(
                     res.boxes.cls[
@@ -485,12 +633,27 @@ class YoloNode(Node):
                         best_name
                     ]
 
+                    observation = Detection2D()
+                    observation.header = msg.header
+                    center = observation.bbox.center.position
+                    center.x, center.y = map(float, best_coord[:2])
+                    observation.bbox.size_x, observation.bbox.size_y = map(float, best_coord[2:])
+                    hypothesis = ObjectHypothesisWithPose()
+                    hypothesis.hypothesis.class_id = best_name
+                    hypothesis.hypothesis.score = float(confidences[self.target_idx])
+                    observation.results = [hypothesis]
+                    batch = Detection2DArray()
+                    batch.header.stamp = received_at
+                    batch.header.frame_id = msg.header.frame_id
+                    batch.detections = [observation]
+                    self.class_observation_pub.publish(batch)
+
                     # =========================
-                    # 최초 객체 기준 안정성 확인
+                    # 최초 탐색만 연속 감지를 확인하고, 추적 중 재검출은 즉시 전달한다.
                     # =========================
 
                     is_stable = (
-                        self.is_same_object(
+                        self.is_tracking or self.is_same_object(
                             current_cls_id,
                             best_coord
                         )
@@ -584,9 +747,9 @@ class YoloNode(Node):
             msg_data
         )
 
-        # 웹용 이미지 발행
+        # 제어 정보부터 전달하고, 같은 프레임의 결과를 화면에 표시한다.
         self.publish_image(
-            frame
+            frame, msg.header, res, selected_idx, msg_data.id >= 0
         )
 
 

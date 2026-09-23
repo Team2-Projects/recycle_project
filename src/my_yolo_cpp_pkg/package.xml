@@ -13,6 +13,8 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>vision_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>opencv-python</exec_depend>
   <exec_depend>ultralytics</exec_depend>
