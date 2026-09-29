@@ -5,7 +5,7 @@ from setuptools import find_packages, setup
 package_name = 'speech_recognition'
 
 # OpenVINO 모델 파일 자동 등록
-model_files = glob('models/whisper_tiny_openvino/*')
+model_files = glob('models/whisper_base_openvino/*')
 
 data_files = [
     ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
@@ -19,7 +19,7 @@ if model_files:
                 'share',
                 package_name,
                 'models',
-                'whisper_tiny_openvino'
+                'whisper_base_openvino'
             ),
             model_files
         ),
