@@ -9,9 +9,6 @@ TurtleBot3 Waffle Pi와 ROS2 Humble을 활용한 자율 순찰·재활용품 수
 
 [▶ 전체 주행 시연 보기 (YouTube)](https://www.youtube.com/watch?v=g55N4FT7ntI&list=PLFiafzPqxeXI&index=6)
 
-지도·객체 검출 화면과 실제 로봇의 주행을 함께 확인할 수 있습니다.
-
-> 대상까지의 정렬·접근 경로가 확보된 제한 조건의 기능 시연입니다. 정렬·접근 중 장애물 회피·안전정지는 미완료 상태입니다.
 
 ## Project 동작 흐름
 
